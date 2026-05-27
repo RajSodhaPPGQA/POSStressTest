@@ -1,0 +1,11 @@
+{
+  "mode": "duration",
+  "durationMins": 5,
+  "maxCycles": 10,
+  "childName": "10Thaprilposfix6",
+  "productName": "test for",
+  "delayAfterChildMs": 500,
+  "delayAfterProductMs": 0,
+  "delayAfterWalletMs": 500,
+  "delayAfterPayMs": 500
+}
