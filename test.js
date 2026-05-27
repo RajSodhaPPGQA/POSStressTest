@@ -1,5 +1,74 @@
 const { remote } = require('webdriverio');
 const config = require('./config.json');
+const { execSync } = require('child_process');
+const readline = require('readline');
+
+function askQuestion(query) {
+    const rl = readline.createInterface({
+        input: process.stdin,
+        output: process.stdout,
+    });
+    return new Promise(resolve => rl.question(query, ans => {
+        rl.close();
+        resolve(ans.trim());
+    }));
+}
+
+async function getDeviceUdid() {
+    let devices = [];
+    try {
+        const output = execSync('adb devices').toString();
+        const lines = output.trim().split('\n');
+        for (let i = 1; i < lines.length; i++) {
+            const line = lines[i].trim();
+            if (line) {
+                const parts = line.split(/\s+/);
+                if (parts[1] === 'device') {
+                    devices.push(parts[0]);
+                }
+            }
+        }
+    } catch (e) {
+        // adb not available or failed
+    }
+
+    if (config.udid) {
+        console.log(`\nConfigured UDID found in config.json: "${config.udid}"`);
+        if (devices.includes(config.udid)) {
+            console.log(`Device is currently connected! Auto-selecting it.`);
+            return config.udid;
+        } else {
+            console.log(`Warning: Configured device "${config.udid}" is not shown in 'adb devices'.`);
+        }
+    }
+
+    if (devices.length === 1) {
+        console.log(`\nAuto-detected only one connected device: "${devices[0]}". Connecting...`);
+        return devices[0];
+    }
+
+    console.log("\n--- ADB Device Selection ---");
+    if (devices.length > 0) {
+        devices.forEach((dev, idx) => {
+            console.log(`[${idx + 1}] ${dev}`);
+        });
+        console.log(`[${devices.length + 1}] Enter custom UDID manually`);
+
+        const selection = await askQuestion(`Select device (1-${devices.length + 1}): `);
+        const selIdx = parseInt(selection) - 1;
+
+        if (selIdx >= 0 && selIdx < devices.length) {
+            console.log(`Selected device: "${devices[selIdx]}"`);
+            return devices[selIdx];
+        }
+    }
+
+    const customUdid = await askQuestion("Enter device UDID manually (e.g. 192.168.4.34:33023): ");
+    if (!customUdid) {
+        throw new Error("No device UDID entered. Exiting.");
+    }
+    return customUdid;
+}
 
 async function findElementFast(driver, text) {
 
@@ -263,6 +332,8 @@ async function setupAndEnterPOS(driver) {
 
 async function main() {
 
+    const targetUdid = await getDeviceUdid();
+
     let driver = await remote({
         hostname: '127.0.0.1',
         port: 4723,
@@ -275,7 +346,7 @@ async function main() {
 
             'appium:deviceName': 'Android',
 
-            'appium:udid': '192.168.4.34:33023',
+            'appium:udid': targetUdid,
 
             'appium:appPackage': 'com.parentpay.PointOfService',
 
@@ -318,7 +389,7 @@ async function main() {
                                 platformName: 'Android',
                                 'appium:automationName': 'UiAutomator2',
                                 'appium:deviceName': 'Android',
-                                'appium:udid': '192.168.4.34:33023',
+                                'appium:udid': targetUdid,
                                 'appium:appPackage': 'com.parentpay.PointOfService',
                                 'appium:appActivity': 'com.parentpay.PointOfService.MainActivity',
                                 'appium:noReset': true
@@ -344,8 +415,15 @@ async function main() {
         const runMode = config.mode || "duration"; // "duration" or "cycles"
         const durationMs = (config.durationMins || 5) * 60 * 1000;
         const maxCycles = config.maxCycles || 10;
-        const childName = config.childName || "10Thaprilposfix6";
-        const productName = config.productName || "test for";
+
+        // Parse comma-separated list of children and products
+        const parseConfigList = (value) => {
+            if (!value) return [];
+            return value.toString().split(',').map(s => s.trim()).filter(s => s.length > 0);
+        };
+
+        const childrenList = parseConfigList(config.childName || "10Thaprilposfix6");
+        const productsList = parseConfigList(config.productName || "test for");
 
         let cycle = 1;
 
@@ -365,12 +443,21 @@ async function main() {
                 console.log(`\n--- Starting Cycle #${cycle} (Elapsed: ${elapsedMins} mins, Target: ${config.durationMins} mins) ---`);
             }
 
+            // Pick a random child and product for this cycle
+            const currentChild = childrenList.length > 0
+                ? childrenList[Math.floor(Math.random() * childrenList.length)]
+                : "10Thaprilposfix6";
+
+            const currentProduct = productsList.length > 0
+                ? productsList[Math.floor(Math.random() * productsList.length)]
+                : "test for";
+
             try {
-                console.log(`Searching for child '${childName}'...`);
+                console.log(`Searching for child '${currentChild}'...`);
 
                 const childElement = await findElementContainsFast(
                     driver,
-                    childName
+                    currentChild
                 );
 
                 await childElement.waitForDisplayed({
@@ -382,16 +469,16 @@ async function main() {
                     elementId: childElement.elementId
                 });
 
-                console.log(`Child '${childName}' selected`);
+                console.log(`Child '${currentChild}' selected`);
 
                 const delayAfterChild = config.delayAfterChildMs !== undefined ? config.delayAfterChildMs : 500;
                 await driver.pause(delayAfterChild);
 
-                console.log(`Searching for product '${productName}'...`);
+                console.log(`Searching for product '${currentProduct}'...`);
 
                 const productElement = await findElementContainsFast(
                     driver,
-                    productName
+                    currentProduct
                 );
 
                 await productElement.waitForDisplayed({
@@ -403,7 +490,7 @@ async function main() {
                     elementId: productElement.elementId
                 });
 
-                console.log(`Product '${productName}' clicked`);
+                console.log(`Product '${currentProduct}' clicked`);
 
                 const delayAfterProduct = config.delayAfterProductMs !== undefined ? config.delayAfterProductMs : 0;
                 await driver.pause(delayAfterProduct);
@@ -484,7 +571,7 @@ async function main() {
                                 platformName: 'Android',
                                 'appium:automationName': 'UiAutomator2',
                                 'appium:deviceName': 'Android',
-                                'appium:udid': '192.168.4.34:33023',
+                                'appium:udid': targetUdid,
                                 'appium:appPackage': 'com.parentpay.PointOfService',
                                 'appium:appActivity': 'com.parentpay.PointOfService.MainActivity',
                                 'appium:noReset': true

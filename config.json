@@ -1,9 +1,10 @@
 {
+  "udid": "192.168.4.34:33023",
   "mode": "duration",
   "durationMins": 5,
   "maxCycles": 10,
-  "childName": "10Thaprilposfix6",
-  "productName": "test for",
+  "childName": "10Thaprilposfix6,10Thaprilposfix8",
+  "productName": "test for demo,StockTest",
   "delayAfterChildMs": 500,
   "delayAfterProductMs": 0,
   "delayAfterWalletMs": 500,
