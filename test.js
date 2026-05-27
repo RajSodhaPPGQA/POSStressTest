@@ -15,6 +15,12 @@ const POSPage = require('./pages/POSPage');
 const CheckoutPage = require('./pages/CheckoutPage');
 const locators = require('./locators.json');
 
+// Dynamic config overrides for locators
+if (config.schoolDev) locators.schoolDev = config.schoolDev;
+if (config.hierarchyLeft) locators.hierarchyLeft = config.hierarchyLeft;
+if (config.hierarchyRight) locators.hierarchyRight = config.hierarchyRight;
+if (config.menuOption) locators.menuOption = config.menuOption;
+
 function askQuestion(query) {
     const rl = readline.createInterface({
         input: process.stdin,

@@ -8,5 +8,9 @@
   "delayAfterChildMs": 500,
   "delayAfterProductMs": 0,
   "delayAfterWalletMs": 500,
-  "delayAfterPayMs": 500
+  "delayAfterPayMs": 500,
+  "schoolDev": "FOREST HILL SCHOOL Dev 1",
+  "hierarchyLeft": "RSQAone",
+  "hierarchyRight": "RSDe one",
+  "menuOption": "SENIOR POS MENU"
 }
