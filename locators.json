@@ -1,0 +1,23 @@
+{
+  "alerts": [
+    "OK",
+    "Retry",
+    "Dismiss",
+    "Close Alert",
+    "RETRY",
+    "Dismiss Alert",
+    "Ok"
+  ],
+  "payButton": "Pay",
+  "selectWalletButton": "Select Wallet",
+  "closeButton": "CLOSE",
+  "nameButton": "Name",
+  "menuOption": "SENIOR POS MENU",
+  "posButton": "POS",
+  "hierarchyLeft": "RSQAone",
+  "hierarchyHeader": "Choose the school outlet hierarchy",
+  "schoolDev": "FOREST HILL SCHOOL Dev 1",
+  "hierarchyRight": "RSDe one",
+  "proceedButton": "Proceed",
+  "yesButton": "Yes"
+}

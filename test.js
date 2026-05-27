@@ -3,6 +3,18 @@ const config = require('./config.json');
 const { execSync } = require('child_process');
 const readline = require('readline');
 
+// Utilities
+const { log } = require('./utils/logger');
+const { reconnectAdb } = require('./utils/adb');
+
+// Page Objects
+const BasePage = require('./pages/BasePage');
+const DashboardPage = require('./pages/DashboardPage');
+const HierarchyPage = require('./pages/HierarchyPage');
+const POSPage = require('./pages/POSPage');
+const CheckoutPage = require('./pages/CheckoutPage');
+const locators = require('./locators.json');
+
 function askQuestion(query) {
     const rl = readline.createInterface({
         input: process.stdin,
@@ -33,17 +45,17 @@ async function getDeviceUdid() {
     }
 
     if (config.udid) {
-        console.log(`\nConfigured UDID found in config.json: "${config.udid}"`);
+        log("SETUP", `Configured UDID found in config.json: "${config.udid}"`);
         if (devices.includes(config.udid)) {
-            console.log(`Device is currently connected! Auto-selecting it.`);
+            log("SETUP", `Device is currently connected! Auto-selecting it.`);
             return config.udid;
         } else {
-            console.log(`Warning: Configured device "${config.udid}" is not shown in 'adb devices'.`);
+            log("SETUP", `Warning: Configured device "${config.udid}" is not shown in 'adb devices'.`);
         }
     }
 
     if (devices.length === 1) {
-        console.log(`\nAuto-detected only one connected device: "${devices[0]}". Connecting...`);
+        log("SETUP", `Auto-detected only one connected device: "${devices[0]}". Connecting...`);
         return devices[0];
     }
 
@@ -58,7 +70,7 @@ async function getDeviceUdid() {
         const selIdx = parseInt(selection) - 1;
 
         if (selIdx >= 0 && selIdx < devices.length) {
-            console.log(`Selected device: "${devices[selIdx]}"`);
+            log("SETUP", `Selected device: "${devices[selIdx]}"`);
             return devices[selIdx];
         }
     }
@@ -70,294 +82,202 @@ async function getDeviceUdid() {
     return customUdid;
 }
 
-async function findElementFast(driver, text) {
-
-    // Try visible element first
-    const visibleElement = await driver.$(
-        `android=new UiSelector().text("${text}")`
-    );
-
-    // RecyclerView items might exist in layout cache but not be displayed.
-    // We must ensure it is displayed to avoid clicking the wrong recycled view.
-    if (await visibleElement.isExisting() && await visibleElement.isDisplayed()) {
-        return visibleElement;
-    }
-
-    // Scroll only if not visible
-    await driver.$(
-        `android=new UiScrollable(new UiSelector().scrollable(true)).setAsVerticalList().scrollIntoView(new UiSelector().text("${text}"))`
-    );
-
-    // Let the scroll settle
-    await driver.pause(1500);
-
-    // Find and return the fresh, stable element now that it is scrolled into view
-    return await driver.$(
-        `android=new UiSelector().text("${text}")`
-    );
-}
-
-async function findElementContainsFast(driver, text) {
-
-    // Try visible element first
-    const visibleElement = await driver.$(
-        `android=new UiSelector().textContains("${text}")`
-    );
-
-    // RecyclerView items might exist in layout cache but not be displayed.
-    // We must ensure it is displayed to avoid clicking the wrong recycled view.
-    if (await visibleElement.isExisting() && await visibleElement.isDisplayed()) {
-        return visibleElement;
-    }
-
-    // Scroll only if not visible
-    await driver.$(
-        `android=new UiScrollable(new UiSelector().scrollable(true)).setAsVerticalList().scrollIntoView(new UiSelector().textContains("${text}"))`
-    );
-
-    // Let the scroll settle
-    await driver.pause(1500);
-
-    // Find and return the fresh, stable element now that it is scrolled into view
-    return await driver.$(
-        `android=new UiSelector().textContains("${text}")`
-    );
-}
-
 async function setupAndEnterPOS(driver) {
-    console.log("App launched successfully");
-
-    await driver.pause(5000);
-
-    // Check if POS button is already visible (app is on Dashboard)
-    const posButtonOnLaunch = await driver.$(
-        'android=new UiSelector().text("POS")'
-    );
-
-    let isAlreadyOnDashboard = false;
+    log("SETUP", "App launched / recovered. Detecting current screen...");
     try {
-        console.log("Checking if already on Dashboard screen...");
-        // Short wait to see if POS button is displayed
-        if (await posButtonOnLaunch.waitForDisplayed({ timeout: 5000 })) {
-            isAlreadyOnDashboard = true;
-            console.log("App opened directly on Dashboard screen!");
-        }
+        log("SETUP", "Activating app com.parentpay.PointOfService to ensure foreground focus...");
+        await driver.activateApp('com.parentpay.PointOfService');
     } catch (e) {
-        console.log("Not on Dashboard screen, starting full school selection setup flow...");
+        log("SETUP_WARNING", `Failed to activate app via driver: ${e.message}`);
+    }
+    await driver.pause(5000); // let page load
+
+    // Proactively clear any network failure or server error alerts
+    try {
+        await BasePage.checkForAlertsAndDismiss(driver);
+    } catch (e) {}
+
+    // 1. Check if we are on the Checkout/Pay Page (State G)
+    if (await CheckoutPage.isDisplayed(driver)) {
+        log("SETUP", "🎯 State G Detected: Already on Checkout/Pay Page. Completing transaction...");
+        await CheckoutPage.clickPay(driver);
+        await driver.pause(5000);
+        return;
     }
 
-    if (isAlreadyOnDashboard) {
-        // Already on dashboard, just click POS button
-        console.log("POS button visible");
-        await posButtonOnLaunch.click();
-        console.log("POS clicked");
+    // 2. Check if we are on the Product Selection Page with Product Selected (State H)
+    if (await POSPage.isProductPageWithSelectedProduct(driver)) {
+        log("SETUP", "🎯 State H Detected: On POS Product page with a product already selected. Clicking 'Select Wallet'...");
+        await POSPage.clickSelectWallet(driver);
         await driver.pause(5000);
+
+        log("SETUP", "Waiting for Pay button...");
+        const payBtnOnLaunch = await driver.$(`android=new UiSelector().text("${locators.payButton}")`);
+        await payBtnOnLaunch.waitForDisplayed({ timeout: 15000 });
+        await CheckoutPage.clickPay(driver);
+        await driver.pause(5000);
+        return;
+    }
+
+    // 3. Check if we are already on the Search Child Page (State D)
+    if (await POSPage.isSearchChildDisplayed(driver)) {
+        log("SETUP", "🎯 State D Detected: Already on the Search Child screen! Ready to select child.");
+        return; // Resume directly
+    }
+
+    // 4. Check if we are on the POS Product Selection Page (State C)
+    if (await POSPage.isPOSMainDisplayed(driver)) {
+        log("SETUP", "🎯 State C Detected: Already on POS page. Opening Search Child...");
+        await POSPage.clickName(driver);
+        await driver.pause(5000);
+        return;
+    }
+
+    // 5. Check if we are on the POS Menu Page (State F)
+    if (await POSPage.isMenuDisplayed(driver)) {
+        log("SETUP", "🎯 State F Detected: On POS Menu screen. Clicking 'SENIOR POS MENU'...");
+        await POSPage.clickMenuOption(driver);
+        await driver.pause(5000);
+
+        log("SETUP", "Waiting for POS page to load...");
+        const nameBtn = await BasePage.findElementFast(driver, locators.nameButton);
+        await nameBtn.waitForDisplayed({ timeout: 15000 });
+        await POSPage.clickName(driver);
+        await driver.pause(5000);
+        return;
+    }
+
+    // 6. Check if we are on the Dashboard Page (State B)
+    if (await DashboardPage.isDisplayed(driver)) {
+        log("SETUP", "🎯 State B Detected: On Dashboard screen. Navigating to POS...");
+        await DashboardPage.clickPOS(driver);
+        await driver.pause(5000);
+
+        log("SETUP", "Searching menu option...");
+        await POSPage.clickMenuOption(driver);
+        await driver.pause(5000);
+
+        log("SETUP", "Waiting for POS page to load...");
+        const nameBtn = await BasePage.findElementFast(driver, locators.nameButton);
+        await nameBtn.waitForDisplayed({ timeout: 15000 });
+        await POSPage.clickName(driver);
+        await driver.pause(5000);
+        return;
+    }
+
+    // 7. Check if we are on the Hierarchy Selection Page (State E)
+    let isStateE = await HierarchyPage.isDisplayed(driver);
+
+    if (isStateE) {
+        log("SETUP", "🎯 State E Detected: Already on Hierarchy Selection screen.");
+        
+        // Dynamic School Validation: Check if the correct school's outlet is available
+        let isCorrectSchool = false;
+        try {
+            // Strict exact match to prevent false positives from similar school names
+            const leftOption = await driver.$(`android=new UiSelector().text("${locators.hierarchyLeft}")`);
+            if (await leftOption.isExisting() && await leftOption.isDisplayed()) {
+                isCorrectSchool = true;
+            } else {
+                // Perform a fast retry check inside layout list
+                log("SETUP", `Checking if target outlet "${locators.hierarchyLeft}" is visible in list...`);
+                for (let i = 0; i < 3; i++) {
+                    if (await leftOption.isDisplayed()) {
+                        isCorrectSchool = true;
+                        break;
+                    }
+                    await driver.pause(500);
+                }
+            }
+        } catch (e) {}
+
+        if (isCorrectSchool) {
+            log("SETUP", "Correct school pre-selected. Resuming hierarchy setup...");
+            await HierarchyPage.selectLeftOption(driver);
+        } else {
+            log("SETUP", "⚠️ Wrong school pre-selected! Navigating back to correct it...");
+            await HierarchyPage.clickBackButton(driver);
+            
+            // We are now back on School Selection Page (State A)
+            log("SETUP", "🎯 State A Detected: Starting full school selection setup flow...");
+            await HierarchyPage.selectSchool(driver);
+
+            log("SETUP", "Waiting 5 seconds for hierarchy screen to load...");
+            await driver.pause(5000);
+
+            await HierarchyPage.selectLeftOption(driver);
+        }
     } else {
-        // =========================
-        // SCHOOL SELECTION
-        // =========================
+        // 8. Default: Initial Startup Setup Flow (State A)
+        log("SETUP", "🎯 State A Detected: Starting full school selection setup flow...");
+        await HierarchyPage.selectSchool(driver);
 
-        console.log("Searching school...");
-
-        const school = await findElementFast(
-            driver,
-            "FOREST HILL SCHOOL Dev 1"
-        );
-
-        await school.waitForDisplayed({
-            timeout: 10000
-        });
-
-        // Let scroll settle to prevent clicking the wrong school
-        await driver.pause(1500);
-
-        // Use native clickGesture for reliable clicking on MAUI
-        await driver.execute('mobile: clickGesture', {
-            elementId: school.elementId
-        });
-
-        console.log("School selected");
-
-        // =========================
-        // WAIT FOR NEXT SCREEN
-        // =========================
-
-        await driver.pause(3000);
-
-        // =========================
-        // LEFT COLUMN SELECTION
-        // =========================
-
-        console.log("Selecting left hierarchy option...");
-
-        const leftOption = await driver.$(
-            'android=new UiSelector().textContains("RSQAone")'
-        );
-
-        await leftOption.waitForDisplayed({
-            timeout: 10000
-        });
-
-        // Recommended for MAUI apps
-        await driver.execute('mobile: clickGesture', {
-            elementId: leftOption.elementId
-        });
-
-        console.log("Left hierarchy selected");
-
-        // =========================
-        // RIGHT COLUMN SELECTION
-        // =========================
-
-        const rightOption = await driver.$(
-            'android=new UiSelector().textContains("RSDe one")'
-        );
-
-        await rightOption.waitForDisplayed({
-            timeout: 15000
-        });
-
-        console.log("Right option appeared");
-
-        console.log(
-            "Displayed:",
-            await rightOption.isDisplayed()
-        );
-
-        console.log(
-            "Enabled:",
-            await rightOption.isEnabled()
-        );
-
-        // Native Android click
-        await driver.execute('mobile: clickGesture', {
-            elementId: rightOption.elementId
-        });
-
-        console.log("Right hierarchy selected");
-
-        await driver.pause(5000);
-        const proceedButton = await driver.$(
-            'android=new UiSelector().textContains("Proceed")'
-        );
-
-        await proceedButton.waitForDisplayed({
-            timeout: 10000
-        });
-
-        console.log("Proceed button found");
-
-        // Recommended for MAUI apps
-        await driver.execute('mobile: clickGesture', {
-            elementId: proceedButton.elementId
-        });
-
-        console.log("Proceed clicked");
-
-        console.log("Waiting for confirmation popup...");
-
-        const yesButton = await driver.$(
-            'android=new UiSelector().text("Yes")'
-        );
-
-        await yesButton.waitForDisplayed({
-            timeout: 10000
-        });
-
-        await yesButton.click();
-
-        console.log("Clicked YES on popup");
-
+        log("SETUP", "Waiting 5 seconds for hierarchy screen to load...");
         await driver.pause(5000);
 
-        console.log("Waiting for dashboard...");
-
-        const posButton = await driver.$(
-            'android=new UiSelector().text("POS")'
-        );
-
-        await posButton.waitForDisplayed({
-            timeout: 15000
-        });
-
-        console.log("POS button visible");
-
-        await posButton.click();
-
-        console.log("POS clicked");
-
-        await driver.pause(5000);
+        await HierarchyPage.selectLeftOption(driver);
     }
 
-    console.log("Searching menu option...");
-
-    const menuOption = await findElementFast(
-        driver,
-        "SENIOR POS MENU"
-    );
-
-    await menuOption.waitForDisplayed({
-        timeout: 10000
-    });
-
-    // Recommended for MAUI apps
-    await driver.execute('mobile: clickGesture', {
-        elementId: menuOption.elementId
-    });
-
-    console.log("SENIOR POS MENU clicked");
+    // Shared flow after left option selection (both State A and State E)
+    await HierarchyPage.completeHierarchySetup(driver);
 
     await driver.pause(5000);
 
-    console.log("Waiting for POS page to load...");
+    log("SETUP", "Waiting for dashboard...");
+    const posBtn = await driver.$(`android=new UiSelector().text("${locators.posButton}")`);
+    await posBtn.waitForDisplayed({ timeout: 20000 });
+    await DashboardPage.clickPOS(driver);
 
-    const nameButton = await findElementFast(
-        driver,
-        "Name"
-    );
+    await driver.pause(5000);
 
-    await nameButton.waitForDisplayed({
-        timeout: 15000
-    });
+    log("SETUP", "Searching menu option...");
+    await POSPage.clickMenuOption(driver);
 
-    // Recommended for MAUI apps
-    await driver.execute('mobile: clickGesture', {
-        elementId: nameButton.elementId
-    });
+    await driver.pause(5000);
 
-    console.log("Name button clicked");
+    log("SETUP", "Waiting for POS page to load...");
+    const nameBtn = await BasePage.findElementFast(driver, locators.nameButton);
+    await nameBtn.waitForDisplayed({ timeout: 20000 });
+    await POSPage.clickName(driver);
 
     await driver.pause(5000);
 }
 
 async function main() {
+    // If a wireless UDID is configured, proactively trigger reconnection before device checking!
+    if (config.udid) {
+        reconnectAdb(config.udid);
+    }
 
     const targetUdid = await getDeviceUdid();
+
+    // Force stop and launch freshly via ADB before creating first Appium session
+    try {
+        log("ADB", `Force-stopping app via ADB on device: "${targetUdid}"...`);
+        execSync(`adb -s ${targetUdid} shell am force-stop com.parentpay.PointOfService`);
+        log("ADB", `Launching app via ADB on device: "${targetUdid}"...`);
+        execSync(`adb -s ${targetUdid} shell am start -n com.parentpay.PointOfService/com.parentpay.PointOfService.MainActivity`);
+        await new Promise(resolve => setTimeout(resolve, 3000)); // wait for layout to start
+    } catch (adbError) {
+        log("ADB_WARNING", `ADB initial launch sequence warning: ${adbError.message}`);
+    }
 
     let driver = await remote({
         hostname: '127.0.0.1',
         port: 4723,
         path: '/',
         capabilities: {
-
             platformName: 'Android',
-
             'appium:automationName': 'UiAutomator2',
-
             'appium:deviceName': 'Android',
-
             'appium:udid': targetUdid,
-
             'appium:appPackage': 'com.parentpay.PointOfService',
-
             'appium:appActivity': 'com.parentpay.PointOfService.MainActivity',
-
             'appium:noReset': true
         }
     });
 
     try {
-
         let setupSuccess = false;
         let setupRetries = 0;
 
@@ -367,19 +287,48 @@ async function main() {
                 setupSuccess = true;
             } catch (setupError) {
                 setupRetries++;
-                console.error(`[ERROR] Initial setup attempt #${setupRetries} failed:`, setupError.message);
+                log("ERROR", `Initial setup attempt #${setupRetries} failed: ${setupError.message}`);
+                
+                // Screenshot on startup failure
+                await BasePage.saveFailureScreenshot(driver, `startup_attempt_${setupRetries}`);
 
-                const isCrash = setupError.message.includes("instrumentation") ||
-                    setupError.message.includes("crashed") ||
-                    setupError.message.includes("Session") ||
-                    setupError.message.includes("no such session");
+                const errMsg = (setupError.message || "").toLowerCase();
+                const isCrash = errMsg.includes("instrumentation") ||
+                    errMsg.includes("crash") ||
+                    errMsg.includes("session") ||
+                    errMsg.includes("refuse") ||
+                    errMsg.includes("connection") ||
+                    errMsg.includes("socket") ||
+                    errMsg.includes("terminated") ||
+                    errMsg.includes("closed") ||
+                    errMsg.includes("econn") ||
+                    errMsg.includes("hang up");
 
                 if (isCrash && setupRetries < 5) {
-                    console.log("\n⚠️ [CRASH DETECTED during startup] App or server crashed! Relaunching and retrying setup...");
+                    log("SETUP_CRASH", "App or server crashed during startup! Relaunching and retrying...");
                     try {
                         try {
                             await driver.deleteSession();
                         } catch (e) { }
+
+                        // Reconnect wireless ADB
+                        reconnectAdb(targetUdid);
+
+                        // Force kill the app process on device via ADB to ensure a clean boot
+                        try {
+                            log("ADB", `Force-stopping app via ADB on device: "${targetUdid}"...`);
+                            execSync(`adb -s ${targetUdid} shell am force-stop com.parentpay.PointOfService`);
+                        } catch (adbError) {
+                            log("ADB_WARNING", `ADB force-stop warning: ${adbError.message}`);
+                        }
+
+                        // Start the app explicitly via ADB to guarantee launch
+                        try {
+                            log("ADB", `Launching app via ADB on device: "${targetUdid}"...`);
+                            execSync(`adb -s ${targetUdid} shell am start -n com.parentpay.PointOfService/com.parentpay.PointOfService.MainActivity`);
+                        } catch (adbError) {
+                            log("ADB_WARNING", `ADB launch warning: ${adbError.message}`);
+                        }
 
                         driver = await remote({
                             hostname: '127.0.0.1',
@@ -396,13 +345,13 @@ async function main() {
                             }
                         });
                     } catch (e) {
-                        console.error("Failed to relaunch driver during startup setup recovery:", e.message);
+                        log("CRITICAL", `Failed to relaunch driver during startup setup recovery: ${e.message}`);
                     }
                 } else {
                     if (setupRetries >= 5) {
                         throw setupError; // Max retries exceeded, throw to crash out
                     }
-                    console.log("Retrying startup setup in 5 seconds...");
+                    log("RETRY", "Retrying startup setup in 5 seconds...");
                     await driver.pause(5000);
                 }
             }
@@ -438,9 +387,9 @@ async function main() {
         while (shouldContinue()) {
             const elapsedMins = ((Date.now() - startTime) / 60000).toFixed(1);
             if (runMode === "cycles") {
-                console.log(`\n--- Starting Cycle #${cycle} of ${maxCycles} ---`);
+                log("CYCLE", `Starting Cycle #${cycle} of ${maxCycles}`);
             } else {
-                console.log(`\n--- Starting Cycle #${cycle} (Elapsed: ${elapsedMins} mins, Target: ${config.durationMins} mins) ---`);
+                log("CYCLE", `Starting Cycle #${cycle} (Elapsed: ${elapsedMins} mins, Target: ${config.durationMins} mins)`);
             }
 
             // Pick a random child and product for this cycle
@@ -453,94 +402,31 @@ async function main() {
                 : "test for";
 
             try {
-                console.log(`Searching for child '${currentChild}'...`);
+                // Clear any network or exception popups before continuing
+                try {
+                    await BasePage.checkForAlertsAndDismiss(driver);
+                } catch (e) {}
 
-                const childElement = await findElementContainsFast(
-                    driver,
-                    currentChild
-                );
-
-                await childElement.waitForDisplayed({
-                    timeout: 15000
-                });
-
-                // Recommended for MAUI apps
-                await driver.execute('mobile: clickGesture', {
-                    elementId: childElement.elementId
-                });
-
-                console.log(`Child '${currentChild}' selected`);
+                await POSPage.selectChild(driver, currentChild);
 
                 const delayAfterChild = config.delayAfterChildMs !== undefined ? config.delayAfterChildMs : 500;
                 await driver.pause(delayAfterChild);
 
-                console.log(`Searching for product '${currentProduct}'...`);
-
-                const productElement = await findElementContainsFast(
-                    driver,
-                    currentProduct
-                );
-
-                await productElement.waitForDisplayed({
-                    timeout: 10000
-                });
-
-                // Recommended for MAUI apps
-                await driver.execute('mobile: clickGesture', {
-                    elementId: productElement.elementId
-                });
-
-                console.log(`Product '${currentProduct}' clicked`);
+                await POSPage.selectProduct(driver, currentProduct);
 
                 const delayAfterProduct = config.delayAfterProductMs !== undefined ? config.delayAfterProductMs : 0;
                 await driver.pause(delayAfterProduct);
 
-                console.log("Waiting for 'Select Wallet' button to be enabled...");
-
-                const selectWalletButton = await driver.$(
-                    'android=new UiSelector().text("Select Wallet")'
-                );
-
-                await selectWalletButton.waitForDisplayed({
-                    timeout: 10000
-                });
-
-                await driver.waitUntil(
-                    async () => await selectWalletButton.isEnabled(),
-                    {
-                        timeout: 15000,
-                        timeoutMsg: 'Expected Select Wallet button to be enabled'
-                    }
-                );
-
-                console.log("Select Wallet button is enabled");
-
-                // Recommended for MAUI apps
-                await driver.execute('mobile: clickGesture', {
-                    elementId: selectWalletButton.elementId
-                });
-
-                console.log("Select Wallet button clicked");
+                await POSPage.clickSelectWallet(driver);
 
                 const delayAfterWallet = config.delayAfterWalletMs !== undefined ? config.delayAfterWalletMs : 500;
                 await driver.pause(delayAfterWallet);
 
-                console.log("Waiting for Checkout page to load...");
+                log("ORDER", "Waiting for Checkout page to load...");
+                const payButton = await driver.$(`android=new UiSelector().text("${locators.payButton}")`);
+                await payButton.waitForDisplayed({ timeout: 15000 });
 
-                const payButton = await driver.$(
-                    'android=new UiSelector().text("Pay")'
-                );
-
-                await payButton.waitForDisplayed({
-                    timeout: 15000
-                });
-
-                // Recommended for MAUI apps
-                await driver.execute('mobile: clickGesture', {
-                    elementId: payButton.elementId
-                });
-
-                console.log("Pay button clicked");
+                await CheckoutPage.clickPay(driver);
 
                 const delayAfterPay = config.delayAfterPayMs !== undefined ? config.delayAfterPayMs : 500;
                 await driver.pause(delayAfterPay);
@@ -548,21 +434,50 @@ async function main() {
                 cycle++;
 
             } catch (cycleError) {
-                console.error(`[ERROR] Cycle #${cycle} failed:`, cycleError.message);
+                log("ERROR", `Cycle #${cycle} failed: ${cycleError.message}`);
+                
+                // Screenshot on cycle failure
+                await BasePage.saveFailureScreenshot(driver, `cycle_${cycle}`);
 
-                const isCrash = cycleError.message.includes("instrumentation") ||
-                    cycleError.message.includes("crashed") ||
-                    cycleError.message.includes("Session") ||
-                    cycleError.message.includes("no such session");
+                const errMsg = (cycleError.message || "").toLowerCase();
+                const isCrash = errMsg.includes("instrumentation") ||
+                    errMsg.includes("crash") ||
+                    errMsg.includes("session") ||
+                    errMsg.includes("refuse") ||
+                    errMsg.includes("connection") ||
+                    errMsg.includes("socket") ||
+                    errMsg.includes("terminated") ||
+                    errMsg.includes("closed") ||
+                    errMsg.includes("econn") ||
+                    errMsg.includes("hang up");
 
                 if (isCrash) {
-                    console.log("\n⚠️ [CRASH DETECTED] App or UiAutomator2 server crashed! Attempting to relaunch...");
+                    log("CRASH", "App or UiAutomator2 server crashed! Attempting to relaunch...");
                     try {
                         try {
                             await driver.deleteSession();
                         } catch (e) { }
 
-                        console.log("Relaunching Appium session...");
+                        // Reconnect wireless ADB
+                        reconnectAdb(targetUdid);
+
+                        // Force kill the app process on device via ADB to ensure a clean boot
+                        try {
+                            log("ADB", `Force-stopping app via ADB on device: "${targetUdid}"...`);
+                            execSync(`adb -s ${targetUdid} shell am force-stop com.parentpay.PointOfService`);
+                        } catch (adbError) {
+                            log("ADB_WARNING", `ADB force-stop warning: ${adbError.message}`);
+                        }
+
+                        // Start the app explicitly via ADB to guarantee launch
+                        try {
+                            log("ADB", `Launching app via ADB on device: "${targetUdid}"...`);
+                            execSync(`adb -s ${targetUdid} shell am start -n com.parentpay.PointOfService/com.parentpay.PointOfService.MainActivity`);
+                        } catch (adbError) {
+                            log("ADB_WARNING", `ADB launch warning: ${adbError.message}`);
+                        }
+
+                        log("SETUP", "Relaunching Appium session...");
                         driver = await remote({
                             hostname: '127.0.0.1',
                             port: 4723,
@@ -579,30 +494,28 @@ async function main() {
                         });
 
                         await setupAndEnterPOS(driver);
-                        console.log("Relaunch successful! Resuming ordering loop...");
+                        log("SETUP", "Relaunch successful! Resuming ordering loop...");
                     } catch (relaunchError) {
-                        console.error("[CRITICAL] Relaunch failed:", relaunchError.message);
+                        log("CRITICAL", `Relaunch failed: ${relaunchError.message}`);
                         await driver.pause(5000);
                     }
                 } else {
-                    console.log("Attempting to recover and continue to next cycle...");
+                    log("RECOVERY", "Attempting to recover and continue to next cycle...");
+                    try {
+                        await BasePage.checkForAlertsAndDismiss(driver);
+                    } catch (e) {}
                     await driver.pause(5000); // 5 seconds recovery delay
                 }
             }
         }
 
-        console.log(`\n=== Automation Run Complete! Successfully executed ${cycle - 1} cycles ===`);
+        log("SUCCESS", `Automation Run Complete! Successfully executed ${cycle - 1} cycles`);
 
     } catch (error) {
-
-        console.error("Automation failed:");
-        console.error(error);
-
+        log("FATAL", `Automation failed: ${error.message}`);
     } finally {
-
         await driver.deleteSession();
-
-        console.log("Session closed");
+        log("SETUP", "Session closed");
     }
 }
 
