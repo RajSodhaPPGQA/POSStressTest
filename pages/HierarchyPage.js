@@ -42,8 +42,13 @@ class HierarchyPage {
     log("HIERARCHY", "Waiting for confirmation popup...");
     const yesButton = await driver.$(`android=new UiSelector().text("${locators.yesButton}")`);
     await yesButton.waitForDisplayed({ timeout: 15000 });
-    await yesButton.click();
+    await BasePage.safeClick(driver, yesButton);
     log("HIERARCHY", "Clicked YES on popup");
+
+    // STATE VERIFICATION: Ensure we transitioned back to Dashboard successfully
+    log("HIERARCHY", "Verifying Dashboard loaded successfully...");
+    const posBtn = await driver.$(`android=new UiSelector().text("${locators.posButton}")`);
+    await BasePage.waitVisible(driver, posBtn, 20000);
   }
 
   static async clickBackButton(driver) {
@@ -75,7 +80,7 @@ class HierarchyPage {
     try {
       const backBtn = await driver.$('android=new UiSelector().text("")');
       if (await backBtn.isExisting() && await backBtn.isDisplayed()) {
-        await backBtn.click();
+        await BasePage.safeClick(driver, backBtn);
         log("HIERARCHY", "Back button clicked successfully");
         await driver.pause(3000);
         return;

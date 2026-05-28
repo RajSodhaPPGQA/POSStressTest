@@ -15,6 +15,11 @@ class DashboardPage {
   static async clickPOS(driver) {
     log("DASHBOARD", "Clicking 'POS' button...");
     await BasePage.clickText(driver, locators.posButton);
+
+    // STATE VERIFICATION: Ensure we successfully navigated to POS Menu Page (State F)
+    log("DASHBOARD", "Verifying POS Menu page loaded successfully...");
+    const menuBtn = await driver.$(`android=new UiSelector().text("${locators.menuOption}")`);
+    await BasePage.waitVisible(driver, menuBtn, 20000);
   }
 }
 

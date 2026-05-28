@@ -1,7 +1,7 @@
 {
-  "udid": "192.168.1.2:39631",
+  "udid": "192.168.1.2:37971",
   "mode": "duration",
-  "durationMins": 3,
+  "durationMins": 20,
   "maxCycles": 10,
   "childName": "10Thaprilposfix6,10Thaprilposfix8",
   "productName": "test for demo,StockTest",
@@ -12,5 +12,17 @@
   "schoolDev": "FOREST HILL SCHOOL Dev 1",
   "hierarchyLeft": "RSQAone",
   "hierarchyRight": "RSDe one",
-  "menuOption": "SENIOR POS MENU"
+  "menuOption": "SENIOR POS MENU",
+  "timeouts": {
+    "defaultWaitMs": 15000,
+    "screenLoadWaitMs": 20000,
+    "smallPauseMs": 500,
+    "appSettleMs": 5000
+  },
+  "keepAwake": true,
+  "connectionMode": "wifi",
+  "newCommandTimeout": 300,
+  "proactiveRelaunchCycles": 50,
+  "maxMemoryLimitMb": 1000,
+  "maxCycleTimeMs": 60000
 }
