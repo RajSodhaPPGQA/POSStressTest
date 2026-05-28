@@ -28,7 +28,7 @@ class CheckoutPage {
       async () => (await closeBtn.isDisplayed().catch(() => false)) || (await nameBtn.isDisplayed().catch(() => false)),
       {
         timeout: 45000,
-        interval: 100,
+        interval: 75,
         timeoutMsg: 'Expected post-payment screen to return to Name/CLOSE state'
       }
     );

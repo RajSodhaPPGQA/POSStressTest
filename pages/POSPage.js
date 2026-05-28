@@ -97,12 +97,19 @@ class POSPage {
         // Use safeClick with dual native click & gesture support for bubble-up clicks in RecyclerView
         await BasePage.safeClick(driver, childElement);
         
-        // Stabilization pause for MAUI list virtualization to close overlay
-        await driver.pause(600);
-
-        // Verify child selection actually succeeded (CLOSE button should be gone)
+        // Adaptive stabilization: return quickly if overlay closes immediately, but allow brief settle window.
         const closeBtn = await driver.$(`android=new UiSelector().text("${locators.closeButton}")`);
-        const stillVisible = await closeBtn.isDisplayed().catch(() => false);
+        let stillVisible = await closeBtn.isDisplayed().catch(() => false);
+        if (stillVisible) {
+          await driver.waitUntil(
+            async () => !(await closeBtn.isDisplayed().catch(() => false)),
+            {
+              timeout: 350,
+              interval: 50
+            }
+          ).catch(() => {});
+          stillVisible = await closeBtn.isDisplayed().catch(() => false);
+        }
         
         if (!stillVisible) {
           log("POS", `🎉 Child "${childName}" successfully selected (Search overlay closed)`);
@@ -115,7 +122,7 @@ class POSPage {
         const direction = attempt % 2 === 0 ? 'down' : 'up';
         log("POS", `Swiping child list ${direction} to locate/select target child...`);
         await this.swipeChildList(driver, direction, 0.75);
-        await driver.pause(500);
+        await driver.pause(300);
       } catch (err) {
         log("POS_WARNING", `Attempt ${attempt} to select child failed: ${err.message}`);
 
@@ -127,7 +134,7 @@ class POSPage {
           log("POS_WARNING", `Fallback child-list swipe failed: ${swipeErr.message}`);
         }
 
-        await driver.pause(500);
+        await driver.pause(300);
       }
     }
 
@@ -141,24 +148,26 @@ class POSPage {
     let productEl = null;
 
     // Fast path: product is usually already visible right after child selection.
-    const exactProduct = await driver.$(`android=new UiSelector().text("${productName}")`);
-    const containsProduct = await driver.$(`android=new UiSelector().textContains("${productName}")`);
+    const exactSelector = `android=new UiSelector().text("${productName}")`;
+    const containsSelector = `android=new UiSelector().textContains("${productName}")`;
     for (let i = 0; i < 8; i++) {
       try {
-        if (await exactProduct.isDisplayed()) {
-          productEl = exactProduct;
+        const exactMatches = await driver.$$(exactSelector);
+        if (exactMatches.length > 0 && await exactMatches[0].isDisplayed()) {
+          productEl = exactMatches[0];
           break;
         }
       } catch (e) {}
 
       try {
-        if (await containsProduct.isDisplayed()) {
-          productEl = containsProduct;
+        const containsMatches = await driver.$$(containsSelector);
+        if (containsMatches.length > 0 && await containsMatches[0].isDisplayed()) {
+          productEl = containsMatches[0];
           break;
         }
       } catch (e) {}
 
-      await driver.pause(100);
+      await driver.pause(40);
     }
 
     // Fallback path: use robust finder with scrolling only when fast path does not find product.
@@ -170,12 +179,12 @@ class POSPage {
 
     // Fast-path wait: product selection is usually immediate, so poll quickly for wallet readiness.
     const walletBtn = await driver.$(`android=new UiSelector().text("${locators.selectWalletButton}")`);
-    await walletBtn.waitForDisplayed({ timeout: 15000, interval: 100 });
+    await walletBtn.waitForDisplayed({ timeout: 15000, interval: 75 });
     await driver.waitUntil(
       async () => await walletBtn.isEnabled(),
       {
         timeout: 15000,
-        interval: 75,
+        interval: 60,
         timeoutMsg: 'Expected Select Wallet button to become enabled after product selection'
       }
     );
@@ -191,7 +200,7 @@ class POSPage {
         async () => await selectWalletButton.isEnabled(),
         {
           timeout: 5000,
-          interval: 75,
+          interval: 60,
           timeoutMsg: 'Expected Select Wallet button to be enabled'
         }
       );
@@ -201,7 +210,7 @@ class POSPage {
 
     // Fast-path wait for Pay button with quick polling.
     const payBtn = await driver.$(`android=new UiSelector().text("${locators.payButton}")`);
-    await payBtn.waitForDisplayed({ timeout: 30000, interval: 100 });
+    await payBtn.waitForDisplayed({ timeout: 30000, interval: 75 });
   }
 }
 

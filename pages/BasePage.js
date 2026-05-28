@@ -127,16 +127,16 @@ class BasePage {
 
   static async findElementFast(driver, text, areaKey = 'global') {
     const exactSelector = `android=new UiSelector().text("${text}")`;
-    const visibleElement = await driver.$(exactSelector);
 
     // Fast retry wait (up to 3s) to allow screen layout to inflate
     for (let i = 0; i < 20; i++) {
       try {
-        if (await visibleElement.isDisplayed()) {
-          return visibleElement;
+        const candidates = await driver.$$(exactSelector);
+        if (candidates.length > 0 && await candidates[0].isDisplayed()) {
+          return candidates[0];
         }
       } catch (e) {}
-      await driver.pause(150);
+      await driver.pause(100);
     }
 
 
@@ -206,16 +206,16 @@ class BasePage {
 
   static async findElementContainsFast(driver, text, areaKey = 'global') {
     const selectorStr = `android=new UiSelector().textContains("${text}")`;
-    const visibleElement = await driver.$(selectorStr);
 
     // Fast retry wait (up to 3s) to allow screen layout to inflate
     for (let i = 0; i < 20; i++) {
       try {
-        if (await visibleElement.isDisplayed()) {
-          return visibleElement;
+        const candidates = await driver.$$(selectorStr);
+        if (candidates.length > 0 && await candidates[0].isDisplayed()) {
+          return candidates[0];
         }
       } catch (e) {}
-      await driver.pause(150);
+      await driver.pause(100);
     }
 
 
@@ -309,7 +309,7 @@ class BasePage {
           if (i === retries) {
             throw new Error(`safeClick failed after ${retries} retries. Last error: ${gestureErr.message}`);
           }
-          await driver.pause(1000);
+          await driver.pause(350);
         }
       }
     }
