@@ -1,7 +1,7 @@
 {
   "udid": "192.168.1.2:37971",
   "mode": "duration",
-  "durationMins": 20,
+  "durationMins": 3,
   "maxCycles": 10,
   "childName": "10Thaprilposfix6,10Thaprilposfix8",
   "productName": "test for demo,StockTest",
