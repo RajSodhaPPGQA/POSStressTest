@@ -92,7 +92,8 @@ async function getDeviceUdid() {
  * Self-healing screen-detection and setup navigation engine.
  * Maps exact page states and resolves unexpected out-of-sync app states dynamically.
  */
-async function setupAndEnterPOS(driver) {
+async function setupAndEnterPOS(driver, unknownRecoveryAttempt = 0) {
+    const unknownRecoveryLimit = config.unknownStateRecoveryLimit || 3;
     log("SETUP", "App launched / recovered. Detecting current screen...");
     try {
         log("SETUP", "Activating app com.parentpay.PointOfService to ensure foreground focus...");
@@ -204,6 +205,10 @@ async function setupAndEnterPOS(driver) {
 
         case 'unknown':
         default:
+            if (unknownRecoveryAttempt >= unknownRecoveryLimit) {
+                throw new Error(`Unknown state recovery limit reached (${unknownRecoveryLimit})`);
+            }
+
             log("STATE_WARN", "⚠️ Unknown/Unrecognized screen state! Performing soft ADB reboot for safety...");
             const targetUdid = driver.capabilities.udid;
             try {
@@ -214,7 +219,7 @@ async function setupAndEnterPOS(driver) {
             }
             await driver.pause(7000); // Wait for boot
             // Recursive self-heal call
-            return await setupAndEnterPOS(driver);
+                return await setupAndEnterPOS(driver, unknownRecoveryAttempt + 1);
     }
 
     // Common hierarchy completion flow (State A & State E)

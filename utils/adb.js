@@ -30,6 +30,8 @@ function reconnectAdb(udid) {
  */
 function ensureAdbConnected(udid, retries = 3) {
   const isUsbMode = config.connectionMode === 'usb';
+  const usbReconnectTimeoutMs = config.usbReconnectTimeoutMs || 120000;
+  const adbWaitForDeviceTimeoutMs = config.adbWaitForDeviceTimeoutMs || 20000;
 
   for (let i = 1; i <= retries; i++) {
     try {
@@ -52,7 +54,8 @@ function ensureAdbConnected(udid, retries = 3) {
       if (isUsbMode) {
         log("RECONNECT", `⚠️ USB Device "${udid}" disconnected! Waiting for physical hotplug...`);
         let usbFound = false;
-        while (!usbFound) {
+        const reconnectStart = Date.now();
+        while (!usbFound && (Date.now() - reconnectStart) < usbReconnectTimeoutMs) {
           try {
             const hotplugOutput = execSync('adb devices').toString();
             const hotLines = hotplugOutput.trim().split('\n');
@@ -69,6 +72,12 @@ function ensureAdbConnected(udid, retries = 3) {
             execSync('ping 127.0.0.1 -n 2 > nul');
           }
         }
+
+        if (!usbFound) {
+          log("RECONNECT_WARNING", `USB reconnect timed out after ${usbReconnectTimeoutMs}ms for device "${udid}".`);
+          continue;
+        }
+
         return true;
       } else {
         log("RECONNECT", `Device "${udid}" not found or offline in adb devices (Attempt ${i}/${retries}). Reconnecting...`);
@@ -78,10 +87,9 @@ function ensureAdbConnected(udid, retries = 3) {
           reconnectAdb(udid);
         }
         
-        execSync('adb wait-for-device');
+        execSync(`adb -s ${udid} wait-for-device`, { timeout: adbWaitForDeviceTimeoutMs });
         
         // Let it settle
-        const Atomics = require('should-be-avoided-but-we-just-use-setTimeout-promise-or-sync-wait');
         execSync('ping 127.0.0.1 -n 2 > nul'); // cross-platform simple sync sleep in batch
       }
     } catch (err) {
