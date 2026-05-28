@@ -7,7 +7,7 @@
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
-  "author": "",
+  "author": "Raj Sodha <raj.sodha@parentpay.com>",
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {

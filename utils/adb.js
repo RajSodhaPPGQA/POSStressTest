@@ -172,9 +172,31 @@ function getAppMemoryUsage(udid) {
   return null;
 }
 
+/**
+ * Resets UiAutomator2 helper services on device to recover from instrumentation crashes.
+ */
+function resetUiAutomator2Server(udid) {
+  const commands = [
+    `adb -s ${udid} shell am force-stop io.appium.uiautomator2.server`,
+    `adb -s ${udid} shell am force-stop io.appium.uiautomator2.server.test`,
+    `adb -s ${udid} shell am force-stop io.appium.settings`,
+    `adb -s ${udid} shell pm clear io.appium.uiautomator2.server`,
+    `adb -s ${udid} shell pm clear io.appium.uiautomator2.server.test`
+  ];
+
+  for (const cmd of commands) {
+    try {
+      execSync(cmd);
+    } catch (e) {
+      log("ADB_WARNING", `UiAutomator2 reset step failed for command [${cmd}]: ${e.message}`);
+    }
+  }
+}
+
 module.exports = {
   reconnectAdb,
   ensureAdbConnected,
   checkNetworkStatus,
-  getAppMemoryUsage
+  getAppMemoryUsage,
+  resetUiAutomator2Server
 };

@@ -2,10 +2,41 @@ const { remote } = require('webdriverio');
 const config = require('./config.json');
 const { execSync } = require('child_process');
 const readline = require('readline');
+const http = require('http');
+async function checkAppiumHealth() {
+    return new Promise((resolve, reject) => {
+        const req = http.get({
+            hostname: '127.0.0.1',
+            port: 4723,
+            path: '/status',
+            timeout: 4000
+        }, (res) => {
+            let data = '';
+            res.on('data', chunk => data += chunk);
+            res.on('end', () => {
+                try {
+                    const status = JSON.parse(data);
+                    if (status.value && status.value.ready) {
+                        resolve(true);
+                    } else {
+                        reject(new Error('Appium server is not ready'));
+                    }
+                } catch (e) {
+                    reject(new Error('Appium status parse error: ' + e.message));
+                }
+            });
+        });
+        req.on('error', (err) => reject(new Error('Appium server not reachable: ' + err.message)));
+        req.on('timeout', () => {
+            req.destroy();
+            reject(new Error('Appium server status request timed out'));
+        });
+    });
+}
 
 // Utilities
 const { log } = require('./utils/logger');
-const { reconnectAdb, ensureAdbConnected, checkNetworkStatus, getAppMemoryUsage } = require('./utils/adb');
+const { reconnectAdb, ensureAdbConnected, checkNetworkStatus, getAppMemoryUsage, resetUiAutomator2Server } = require('./utils/adb');
 
 // Page Objects
 const BasePage = require('./pages/BasePage');
@@ -20,6 +51,60 @@ if (config.schoolDev) locators.schoolDev = config.schoolDev;
 if (config.hierarchyLeft) locators.hierarchyLeft = config.hierarchyLeft;
 if (config.hierarchyRight) locators.hierarchyRight = config.hierarchyRight;
 if (config.menuOption) locators.menuOption = config.menuOption;
+
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+function buildRemoteOptions(targetUdid) {
+    return {
+        hostname: '127.0.0.1',
+        port: 4723,
+        path: '/',
+        connectionRetryTimeout: config.connectionRetryTimeoutMs || 120000,
+        connectionRetryCount: config.connectionRetryCount !== undefined ? config.connectionRetryCount : 1,
+        capabilities: {
+            platformName: 'Android',
+            'appium:automationName': 'UiAutomator2',
+            'appium:deviceName': 'Android',
+            'appium:udid': targetUdid,
+            'appium:appPackage': 'com.parentpay.PointOfService',
+            'appium:appActivity': 'com.parentpay.PointOfService.MainActivity',
+            'appium:noReset': true,
+            'appium:newCommandTimeout': config.newCommandTimeout || 300,
+            'appium:adbExecTimeout': config.adbExecTimeoutMs || 120000,
+            'appium:uiautomator2ServerInstallTimeout': config.uia2InstallTimeoutMs || 120000,
+            'appium:uiautomator2ServerLaunchTimeout': config.uia2LaunchTimeoutMs || 120000,
+            'appium:disableWindowAnimation': config.disableWindowAnimation !== false,
+            'appium:ignoreHiddenApiPolicyError': true
+        }
+    };
+}
+
+async function createDriverSession(targetUdid, reason = 'startup') {
+    const attempts = config.driverInitRetries || 3;
+    let lastError;
+
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+        try {
+            log("SETUP", `Creating Appium session (${reason}) attempt ${attempt}/${attempts}...`);
+            const driver = await remote(buildRemoteOptions(targetUdid));
+            await driver.getWindowSize();
+            return driver;
+        } catch (e) {
+            lastError = e;
+            log("SETUP_WARNING", `Session creation attempt ${attempt} failed: ${e.message}`);
+            try {
+                resetUiAutomator2Server(targetUdid);
+                execSync(`adb -s ${targetUdid} shell am force-stop com.parentpay.PointOfService`);
+                execSync(`adb -s ${targetUdid} shell am start -n com.parentpay.PointOfService/com.parentpay.PointOfService.MainActivity`);
+            } catch (resetErr) {
+                log("ADB_WARNING", `Driver creation recovery failed: ${resetErr.message}`);
+            }
+            await sleep(2500);
+        }
+    }
+
+    throw new Error(`Unable to create Appium session after ${attempts} attempts: ${lastError ? lastError.message : 'Unknown error'}`);
+}
 
 function askQuestion(query) {
     const rl = readline.createInterface({
@@ -209,6 +294,22 @@ async function setupAndEnterPOS(driver, unknownRecoveryAttempt = 0) {
                 throw new Error(`Unknown state recovery limit reached (${unknownRecoveryLimit})`);
             }
 
+            // Before rebooting, allow late-rendering school/hierarchy screens to settle and re-detect.
+            log("STATE_WARN", "Unknown state detected. Performing local re-detection before ADB reboot...");
+            try {
+                await driver.pause(2500);
+                await BasePage.checkForAlertsAndDismiss(driver);
+                await BasePage.swipeUp(driver, 0.45);
+                await driver.pause(1200);
+                const recoveredState = await BasePage.detectCurrentState(driver);
+                if (recoveredState !== 'unknown') {
+                    log("STATE_RECOVERY", `Recovered state without reboot: "${recoveredState}"`);
+                    return await setupAndEnterPOS(driver, unknownRecoveryAttempt + 1);
+                }
+            } catch (localRecoverErr) {
+                log("STATE_WARN", `Local re-detection failed: ${localRecoverErr.message}`);
+            }
+
             log("STATE_WARN", "⚠️ Unknown/Unrecognized screen state! Performing soft ADB reboot for safety...");
             const targetUdid = driver.capabilities.udid;
             try {
@@ -244,6 +345,14 @@ async function setupAndEnterPOS(driver, unknownRecoveryAttempt = 0) {
 }
 
 async function main() {
+    log("SETUP", "Checking Appium server health at http://127.0.0.1:4723/status ...");
+    try {
+        await checkAppiumHealth();
+        log("SETUP", "Appium server is healthy and ready.");
+    } catch (e) {
+        log("FATAL", `Appium server health check failed: ${e.message}`);
+        process.exit(1);
+    }
     // Proactively check wireless ADB reconnection
     if (config.udid) {
         reconnectAdb(config.udid);
@@ -277,21 +386,7 @@ async function main() {
         log("ADB_WARNING", `ADB initial launch sequence warning: ${adbError.message}`);
     }
 
-    let driver = await remote({
-        hostname: '127.0.0.1',
-        port: 4723,
-        path: '/',
-        capabilities: {
-            platformName: 'Android',
-            'appium:automationName': 'UiAutomator2',
-            'appium:deviceName': 'Android',
-            'appium:udid': targetUdid,
-            'appium:appPackage': 'com.parentpay.PointOfService',
-            'appium:appActivity': 'com.parentpay.PointOfService.MainActivity',
-            'appium:noReset': true,
-            'appium:newCommandTimeout': config.newCommandTimeout || 300
-        }
-    });
+    let driver = await createDriverSession(targetUdid, 'initial');
 
     try {
         let setupSuccess = false;
@@ -332,6 +427,7 @@ async function main() {
 
                         reconnectAdb(targetUdid);
                         ensureAdbConnected(targetUdid);
+                        resetUiAutomator2Server(targetUdid);
 
                         try {
                             log("ADB", `Force-stopping app via ADB on device: "${targetUdid}"...`);
@@ -347,21 +443,7 @@ async function main() {
                             log("ADB_WARNING", `ADB launch warning: ${adbError.message}`);
                         }
 
-                        driver = await remote({
-                            hostname: '127.0.0.1',
-                            port: 4723,
-                            path: '/',
-                            capabilities: {
-                                platformName: 'Android',
-                                'appium:automationName': 'UiAutomator2',
-                                'appium:deviceName': 'Android',
-                                'appium:udid': targetUdid,
-                                'appium:appPackage': 'com.parentpay.PointOfService',
-                                'appium:appActivity': 'com.parentpay.PointOfService.MainActivity',
-                                'appium:noReset': true,
-                                'appium:newCommandTimeout': config.newCommandTimeout || 300
-                            }
-                        });
+                        driver = await createDriverSession(targetUdid, 'startup-crash-recovery');
                     } catch (e) {
                         log("CRITICAL", `Failed to relaunch driver during startup setup recovery: ${e.message}`);
                     }
@@ -410,27 +492,27 @@ async function main() {
             }
 
             try {
-                // 1. Connection Drop & Network Health check before cycle begins
+                // 1. ADB connectivity check (fast - just adb devices)
                 ensureAdbConnected(targetUdid);
-                checkNetworkStatus(targetUdid);
 
-                // 2. Real-time Memory Diagnostics
-                const memUsage = getAppMemoryUsage(targetUdid);
-                if (memUsage) {
-                    log("MEMORY", `App heap size: ${memUsage.mb} MB (${memUsage.kb} KB)`);
-                    const limit = config.maxMemoryLimitMb;
-                    if (limit && memUsage.mb > limit) {
-                        log("MEMORY_WARNING", `⚠️ Memory limit exceeded! Heap: ${memUsage.mb} MB > Limit: ${limit} MB. Recycling session...`);
-                        // Throw special error to trigger clean app reboot
-                        throw new Error("PROACTIVE_MEM_RECYCLE");
+                // 2. Network + Memory checks only every 10 cycles (avoid blocking ping per cycle)
+                if (cycle % 10 === 1) {
+                    checkNetworkStatus(targetUdid);
+                    const memUsage = getAppMemoryUsage(targetUdid);
+                    if (memUsage) {
+                        log("MEMORY", `App heap size: ${memUsage.mb} MB (${memUsage.kb} KB)`);
+                        const limit = config.maxMemoryLimitMb;
+                        if (limit && memUsage.mb > limit) {
+                            log("MEMORY_WARNING", `⚠️ Memory limit exceeded! Heap: ${memUsage.mb} MB > Limit: ${limit} MB. Recycling session...`);
+                            throw new Error("PROACTIVE_MEM_RECYCLE");
+                        }
                     }
                 }
 
-                // 3. Proactive App Relaunch Cycle check
+                // 3. Proactive App Relaunch Cycle check (timer-based: just log, no restart)
                 const proactivelyRelaunchCycleLimit = config.proactiveRelaunchCycles;
                 if (proactivelyRelaunchCycleLimit && cycle > 1 && (cycle - 1) % proactivelyRelaunchCycleLimit === 0) {
-                    log("CYCLE", `🎯 Proactive reboot interval reached (${proactivelyRelaunchCycleLimit} cycles). Relaunching app to flush resources...`);
-                    throw new Error("PROACTIVE_CYCLE_RECYCLE");
+                    log("CYCLE", `📍 Proactive interval marker at cycle ${cycle} (${proactivelyRelaunchCycleLimit} cycle boundary). Session still healthy, continuing without restart.`);
                 }
 
                 // Pick child and product
@@ -486,10 +568,6 @@ async function main() {
                     const delayAfterWallet = config.delayAfterWalletMs !== undefined ? config.delayAfterWalletMs : 500;
                     await driver.pause(delayAfterWallet);
 
-                    log("ORDER", "Waiting for Checkout page to load...");
-                    const payButton = await driver.$(`android=new UiSelector().text("${locators.payButton}")`);
-                    await payButton.waitForDisplayed({ timeout: (config.timeouts && config.timeouts.defaultWaitMs) || 15000 });
-
                     const payClickStart = Date.now();
                     await CheckoutPage.clickPay(driver);
                     log("TIMING", `Payment completed in ${Date.now() - payClickStart}ms`);
@@ -514,9 +592,9 @@ async function main() {
 
                 const errStr = (cycleError.message || "").toLowerCase();
                 const isWatchdog = cycleError.message === "WATCHDOG_TIMEOUT";
-                const isProactiveRecycle = cycleError.message === "PROACTIVE_MEM_RECYCLE" || cycleError.message === "PROACTIVE_CYCLE_RECYCLE";
-                
-                const isCrash = isWatchdog || isProactiveRecycle ||
+                const isProactiveMemRecycle = cycleError.message === "PROACTIVE_MEM_RECYCLE";
+
+                const isCrash = isWatchdog || isProactiveMemRecycle ||
                     errStr.includes("instrumentation") ||
                     errStr.includes("crash") ||
                     errStr.includes("session") ||
@@ -529,61 +607,65 @@ async function main() {
                     errStr.includes("hang up");
 
                 if (isCrash) {
-                    if (isWatchdog) {
-                        log("WATCHDOG", `⚠️ Watchdog fired! Screen has been frozen on device for more than ${maxTime}ms.`);
-                        await BasePage.saveFailureScreenshot(driver, `watchdog_stuck_cycle_${cycle}`);
-                    } else if (isProactiveRecycle) {
-                        log("RELAUNCH", "Recycling App and Session proactively to release leaked memory/handles...");
+                    const skipScreenshotOnDeadSession = errStr.includes("instrumentation") || errStr.includes("socket") || errStr.includes("session");
+
+                    if (isProactiveMemRecycle) {
+                        // Memory limit exceeded: bounce app via Appium commands, reuse existing session
+                        log("RELAUNCH", `Memory limit exceeded. Bouncing app via Appium (no session teardown)...`);
+                        try {
+                            try { await driver.terminateApp('com.parentpay.PointOfService'); } catch (e) { }
+                            await driver.pause(1500);
+                            await driver.activateApp('com.parentpay.PointOfService');
+                            await driver.pause(3000);
+                            await setupAndEnterPOS(driver);
+                            log("RELAUNCH", "Memory recycle complete. Resuming ordering loop...");
+                        } catch (memErr) {
+                            log("RELAUNCH_WARNING", `App bounce failed (${memErr.message}), falling back to full session recovery...`);
+                            try { await driver.deleteSession(); } catch (e) { }
+                            resetUiAutomator2Server(targetUdid);
+                            try { execSync(`adb -s ${targetUdid} shell am force-stop com.parentpay.PointOfService`); } catch (e) { }
+                            try { execSync(`adb -s ${targetUdid} shell am start -n com.parentpay.PointOfService/com.parentpay.PointOfService.MainActivity`); } catch (e) { }
+                            driver = await createDriverSession(targetUdid, 'mem-recycle-fallback');
+                            await setupAndEnterPOS(driver);
+                        }
                     } else {
-                        await BasePage.saveFailureScreenshot(driver, `cycle_${cycle}_crash`);
-                    }
-
-                    log("CRASH", "App or UiAutomator2 server crashed / requires reboot! Recovering...");
-                    try {
-                        try {
-                            await driver.deleteSession();
-                        } catch (e) { }
-
-                        // Trigger robust ADB reconnection checks
-                        reconnectAdb(targetUdid);
-                        ensureAdbConnected(targetUdid);
-
-                        try {
-                            log("ADB", `Force-stopping app via ADB on device: "${targetUdid}"...`);
-                            execSync(`adb -s ${targetUdid} shell am force-stop com.parentpay.PointOfService`);
-                        } catch (adbError) {
-                            log("ADB_WARNING", `ADB force-stop warning: ${adbError.message}`);
-                        }
-
-                        try {
-                            log("ADB", `Launching app via ADB on device: "${targetUdid}"...`);
-                            execSync(`adb -s ${targetUdid} shell am start -n com.parentpay.PointOfService/com.parentpay.PointOfService.MainActivity`);
-                        } catch (adbError) {
-                            log("ADB_WARNING", `ADB launch warning: ${adbError.message}`);
-                        }
-
-                        log("SETUP", "Relaunching Appium session...");
-                        driver = await remote({
-                            hostname: '127.0.0.1',
-                            port: 4723,
-                            path: '/',
-                            capabilities: {
-                                platformName: 'Android',
-                                'appium:automationName': 'UiAutomator2',
-                                'appium:deviceName': 'Android',
-                                'appium:udid': targetUdid,
-                                'appium:appPackage': 'com.parentpay.PointOfService',
-                                'appium:appActivity': 'com.parentpay.PointOfService.MainActivity',
-                                'appium:noReset': true,
-                                'appium:newCommandTimeout': config.newCommandTimeout || 300
+                        // FULL CRASH PATH: watchdog / real crash — full session teardown and recreation
+                        if (isWatchdog) {
+                            log("WATCHDOG", `⚠️ Watchdog fired! Screen has been frozen for more than ${maxTime}ms.`);
+                            if (!skipScreenshotOnDeadSession) {
+                                await BasePage.saveFailureScreenshot(driver, `watchdog_stuck_cycle_${cycle}`);
                             }
-                        });
+                        } else {
+                            if (!skipScreenshotOnDeadSession) {
+                                await BasePage.saveFailureScreenshot(driver, `cycle_${cycle}_crash`);
+                            }
+                        }
 
-                        await setupAndEnterPOS(driver);
-                        log("SETUP", "Relaunch and State recovery successful! Resuming ordering loop...");
-                    } catch (relaunchError) {
-                        log("CRITICAL", `Relaunch failed: ${relaunchError.message}`);
-                        await driver.pause(5000);
+                        log("CRASH", "App or UiAutomator2 server crashed / requires full session recovery...");
+                        try {
+                            try { await driver.deleteSession(); } catch (e) { }
+
+                            reconnectAdb(targetUdid);
+                            ensureAdbConnected(targetUdid);
+                            resetUiAutomator2Server(targetUdid);
+
+                            try {
+                                execSync(`adb -s ${targetUdid} shell am force-stop com.parentpay.PointOfService`);
+                            } catch (adbError) { log("ADB_WARNING", `force-stop warning: ${adbError.message}`); }
+
+                            try {
+                                execSync(`adb -s ${targetUdid} shell am start -n com.parentpay.PointOfService/com.parentpay.PointOfService.MainActivity`);
+                            } catch (adbError) { log("ADB_WARNING", `launch warning: ${adbError.message}`); }
+
+                            log("SETUP", "Relaunching Appium session...");
+                            driver = await createDriverSession(targetUdid, 'cycle-crash-recovery');
+
+                            await setupAndEnterPOS(driver);
+                            log("SETUP", "Relaunch and State recovery successful! Resuming ordering loop...");
+                        } catch (relaunchError) {
+                            log("CRITICAL", `Relaunch failed: ${relaunchError.message}`);
+                            await sleep(5000);
+                        }
                     }
                 } else {
                     log("RECOVERY", "Attempting to recover in-session and continue to next cycle...");
@@ -600,7 +682,11 @@ async function main() {
     } catch (error) {
         log("FATAL", `Automation failed: ${error.message}`);
     } finally {
-        await driver.deleteSession();
+        try {
+            await driver.deleteSession();
+        } catch (e) {
+            log("SETUP_WARNING", `Session already closed/unavailable during teardown: ${e.message}`);
+        }
         log("SETUP", "Session closed");
     }
 }

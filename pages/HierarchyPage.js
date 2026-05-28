@@ -14,19 +14,24 @@ class HierarchyPage {
 
   static async selectLeftOption(driver) {
     log("HIERARCHY", `Selecting left hierarchy option: "${locators.hierarchyLeft}"...`);
-    await BasePage.clickText(driver, locators.hierarchyLeft);
+    await BasePage.clickText(driver, locators.hierarchyLeft, 'hierarchyList');
     log("HIERARCHY", "Left hierarchy selected");
   }
 
   static async selectRightOption(driver) {
     log("HIERARCHY", `Selecting right hierarchy option: "${locators.hierarchyRight}"...`);
-    await BasePage.clickText(driver, locators.hierarchyRight);
+    await BasePage.clickText(driver, locators.hierarchyRight, 'hierarchyList');
     log("HIERARCHY", "Right hierarchy selected");
   }
 
   static async selectSchool(driver) {
     log("HIERARCHY", `Selecting school: "${locators.schoolDev}"...`);
-    await BasePage.clickText(driver, locators.schoolDev);
+    try {
+      await BasePage.clickText(driver, locators.schoolDev, 'hierarchyList');
+    } catch (exactErr) {
+      log("HIERARCHY_WARNING", `Exact school match failed: ${exactErr.message}. Retrying with textContains...`);
+      await BasePage.clickTextContains(driver, locators.schoolDev, 'hierarchyList');
+    }
     log("HIERARCHY", "School selected");
   }
 

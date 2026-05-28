@@ -1,14 +1,14 @@
 {
-  "udid": "192.168.1.2:37971",
+  "udid": "192.168.1.2:40423",
   "mode": "duration",
-  "durationMins": 3,
+  "durationMins": 4,
   "maxCycles": 10,
   "childName": "10Thaprilposfix6,10Thaprilposfix8",
   "productName": "test for demo,StockTest",
-  "delayAfterChildMs": 500,
-  "delayAfterProductMs": 0,
-  "delayAfterWalletMs": 500,
-  "delayAfterPayMs": 500,
+  "delayAfterChildMs": 80,
+  "delayAfterProductMs": 100,
+  "delayAfterWalletMs": 60,
+  "delayAfterPayMs": 60,
   "schoolDev": "FOREST HILL SCHOOL Dev 1",
   "hierarchyLeft": "RSQAone",
   "hierarchyRight": "RSDe one",
@@ -22,7 +22,28 @@
   "keepAwake": true,
   "connectionMode": "wifi",
   "newCommandTimeout": 300,
-  "proactiveRelaunchCycles": 50,
+  "proactiveRelaunchCycles": 30,
   "maxMemoryLimitMb": 1000,
-  "maxCycleTimeMs": 60000
+  "maxCycleTimeMs": 90000,
+  "unknownStateRecoveryLimit": 5,
+  "driverInitRetries": 4,
+  "connectionRetryTimeoutMs": 120000,
+  "connectionRetryCount": 1,
+  "adbExecTimeoutMs": 180000,
+  "uia2InstallTimeoutMs": 180000,
+  "uia2LaunchTimeoutMs": 180000,
+  "disableWindowAnimation": true,
+  "deviceProfile": "s10fe",
+  "swipeProfiles": {
+    "s10fe": {
+      "global": { "left": 0.15, "top": 0.20, "width": 0.70, "height": 0.60 },
+      "hierarchyList": { "left": 0.12, "top": 0.22, "width": 0.42, "height": 0.56 },
+      "childList": { "left": 0.12, "top": 0.22, "width": 0.45, "height": 0.56 }
+    },
+    "s8": {
+      "global": { "left": 0.15, "top": 0.20, "width": 0.70, "height": 0.60 },
+      "hierarchyList": { "left": 0.12, "top": 0.22, "width": 0.42, "height": 0.56 },
+      "childList": { "left": 0.12, "top": 0.22, "width": 0.45, "height": 0.56 }
+    }
+  }
 }
