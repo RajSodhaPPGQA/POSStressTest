@@ -65,20 +65,60 @@ Edit `config.json` before execution.
 - `keepAwake`: prevents device sleep using ADB power command
 - `newCommandTimeout`: Appium command timeout
 
-### Test Data (comma-separated supported)
+### Test Data
 
-- `childName`: one or many child names, comma separated
-- `productName`: one or many product names, comma separated
+**Child selection** (comma-separated, one picked at random each cycle):
+```json
+"childName": "Child A,Child B"
+```
 
-The script randomly picks one value from each list per cycle.
+**Product / Cart configuration — choose ONE mode:**
+
+| Mode | Key | Behavior |
+|------|-----|----------|
+| A — Legacy (default) | `productName` | 1 random product, qty always 1 |
+| B — Random product + qty | `products` (object array) | 1 random product, fixed or random qty |
+| C — Random multi-product cart | `products` (string array) + `maxProductsPerCart` + `maxQtyPerProduct` | Random 1–N products, random qty each |
+| D — Explicit cart | `cartProducts` | All listed products, exact qty, every cycle |
+
+Priority: `cartProducts` → `products` → `productName`
+
+**Mode A — Legacy (no changes needed for existing configs):**
+```json
+"productName": "test for demo,StockTest"
+```
+
+**Mode B — Random product + random qty:**
+```json
+"products": [
+  { "name": "test for demo", "qty": [1, 2, 3] },
+  { "name": "StockTest",    "qty": 1 }
+]
+```
+
+**Mode C — Randomized multi-product cart:**
+```json
+"products": ["test for demo", "StockTest", "Burger"],
+"maxProductsPerCart": 3,
+"maxQtyPerProduct": 2
+```
+
+**Mode D — Explicit cart (same every cycle):**
+```json
+"cartProducts": [
+  { "name": "test for demo", "qty": 2 },
+  { "name": "StockTest",    "qty": 1 }
+]
+```
 
 ### Timing Controls
 
-- `delayAfterChildMs`
-- `delayAfterProductMs`
-- `delayAfterWalletMs`
-- `delayAfterPayMs`
-- `maxCycleTimeMs`: watchdog timeout for one transaction cycle
+- `delayAfterChildMs` — pause after child selection
+- `delayAfterProductMs` — pause after full cart is built
+- `delayAfterWalletMs` — pause after wallet selection
+- `delayAfterPayMs` — pause after payment
+- `delayBetweenQuantityClicksMs` — pause between repeated clicks on the same product (qty increment). Default: 1000ms
+- `maxCycleTimeMs` — watchdog timeout for one transaction cycle
 
 ### Stability/Health Controls
 

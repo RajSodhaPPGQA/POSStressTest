@@ -63,8 +63,8 @@ class BasePage {
     try {
       const isVisible = async (selector) => {
         try {
-          const el = await driver.$(selector);
-          return await el.isExisting() && await el.isDisplayed();
+          const els = await driver.$$(selector);
+          return els.length > 0 && await els[0].isDisplayed().catch(() => false);
         } catch (e) {
           return false;
         }
@@ -127,20 +127,42 @@ class BasePage {
 
   static async findElementFast(driver, text, areaKey = 'global') {
     const exactSelector = `android=new UiSelector().text("${text}")`;
+    const _t0 = Date.now();
 
-    // Fast retry wait (up to 3s) to allow screen layout to inflate
-    for (let i = 0; i < 20; i++) {
+    // ── INITIAL LOOKUP ──────────────────────────────────────────────────────
+    // Single non-blocking probe — return immediately if element is already visible.
+    log("FASTPATH", `Immediate lookup started`);
+    try {
+      const initialCandidates = await driver.$$(exactSelector);
+      const _initialLookupMs = Date.now() - _t0;
+      if (initialCandidates.length > 0 && await initialCandidates[0].isDisplayed()) {
+        log("FASTPATH", `Element found immediately | lookup=${_initialLookupMs}ms`);
+        return initialCandidates[0];
+      }
+    } catch (e) {}
+
+    // ── RETRY LOOP ──────────────────────────────────────────────────────────
+    // Element not yet visible — allow up to ~1s for layout inflation (24 × 40ms).
+    log("FASTPATH", `Retry loop entered`);
+    let _retryCount = 0;
+    const _retryStart = Date.now();
+    for (let i = 1; i < 25; i++) {
+      await driver.pause(40);
+      _retryCount++;
+      log("FASTPATH", `Retry #${_retryCount}`);
       try {
         const candidates = await driver.$$(exactSelector);
         if (candidates.length > 0 && await candidates[0].isDisplayed()) {
+          const _retryLoopMs = Date.now() - _retryStart;
+          log("FASTPATH", `Element found | retry=${_retryCount} | retry_loop=${_retryLoopMs}ms | total=${Date.now() - _t0}ms`);
           return candidates[0];
         }
       } catch (e) {}
-      await driver.pause(100);
     }
 
-
-
+    // ── SCROLL ACTIVATION ───────────────────────────────────────────────────
+    const _scrollStart = Date.now();
+    log("FASTPATH", `Scroll activated | pre_scroll=${_scrollStart - _t0}ms`);
     // Scroll with exact text matching
     log("SCROLL", `Element "${text}" not instantly visible. Scrolling...`);
     try {
@@ -152,6 +174,7 @@ class BasePage {
     }
 
     await driver.pause(scrollSettleDelay); // let scroll settle
+    log("FASTPATH", `Scroll completed | scroll=${Date.now() - _scrollStart}ms`);
     
     // RE-FIND the element after scrolling to refresh its coordinates and elementId!
     const freshElement = await driver.$(exactSelector);
@@ -160,7 +183,6 @@ class BasePage {
         return freshElement;
       }
     } catch (e) {}
-
 
     const finalElement = await driver.$(exactSelector);
     if (await finalElement.isDisplayed()) {
@@ -206,21 +228,40 @@ class BasePage {
 
   static async findElementContainsFast(driver, text, areaKey = 'global') {
     const selectorStr = `android=new UiSelector().textContains("${text}")`;
+    const _t0 = Date.now();
 
-    // Fast retry wait (up to 3s) to allow screen layout to inflate
-    for (let i = 0; i < 20; i++) {
+    // ── INITIAL LOOKUP ──────────────────────────────────────────────────────
+    // Single non-blocking probe: if the element is already visible, return
+    // immediately with no pause or retry overhead.
+    try {
+      const initialCandidates = await driver.$$(selectorStr);
+      const _initialLookupMs = Date.now() - _t0;
+      if (initialCandidates.length > 0 && await initialCandidates[0].isDisplayed()) {
+        log("FASTPATH", `Element found immediately | lookup=${_initialLookupMs}ms`);
+        return initialCandidates[0];
+      }
+    } catch (e) {}
+
+    // ── RETRY LOOP ──────────────────────────────────────────────────────────
+    // Element not yet visible — allow up to ~2.4s for layout inflation.
+    let _retryCount = 0;
+    const _retryStart = Date.now();
+    for (let i = 1; i < 25; i++) {
+      await driver.pause(100);
+      _retryCount++;
       try {
         const candidates = await driver.$$(selectorStr);
         if (candidates.length > 0 && await candidates[0].isDisplayed()) {
+          const _retryLoopMs = Date.now() - _retryStart;
+          log("FASTPATH", `Retries executed: ${_retryCount} | retry_loop=${_retryLoopMs}ms | total=${Date.now() - _t0}ms`);
           return candidates[0];
         }
       } catch (e) {}
-      await driver.pause(100);
     }
 
-
-
-    // Scroll and return the returned scrolled element reference directly
+    // ── SCROLL ACTIVATION ───────────────────────────────────────────────────
+    const _scrollStart = Date.now();
+    log("FASTPATH", `Scroll activated | pre_scroll_elapsed=${_scrollStart - _t0}ms`);
     log("SCROLL", `Element "${text}" not instantly visible. Scrolling...`);
     try {
       await driver.$(
@@ -231,6 +272,7 @@ class BasePage {
     }
 
     await driver.pause(scrollSettleDelay); // let scroll settle
+    log("FASTPATH", `Scroll completed | scroll=${Date.now() - _scrollStart}ms`);
     
     // RE-FIND the element after scrolling to refresh its coordinates and elementId!
     const freshElement = await driver.$(selectorStr);
@@ -341,12 +383,11 @@ class BasePage {
       ];
       
       const xpath = `//*[@text="${popupButtons.join('" or @text="')}"]`;
-      const alertButton = await driver.$(xpath);
-      
-      if (await alertButton.isExisting() && await alertButton.isDisplayed()) {
-        const btnText = await alertButton.getText();
+      const alertButtons = await driver.$$(xpath);
+      if (alertButtons.length > 0 && await alertButtons[0].isDisplayed().catch(() => false)) {
+        const btnText = await alertButtons[0].getText();
         log("POPUP", `👉 Intercepted popup/alert! Auto-dismissing with button: "${btnText}"`);
-        await alertButton.click();
+        await alertButtons[0].click();
         await driver.pause(3000); // Wait for popup transition to fade out
       }
     } catch (e) {

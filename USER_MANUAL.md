@@ -7,7 +7,7 @@ High-level flow per cycle:
 
 1. Ensure app is on the correct POS screen (self-healing navigation)
 2. Select child
-3. Select product
+3. Build cart (one or more products, configurable quantity each)
 4. Click Select Wallet
 5. Click Pay
 6. Repeat until run completes
@@ -60,19 +60,105 @@ Config:
 
 ## 5. Editing Test Data
 
-Edit `config.json` values:
+### Child Selection
 
-- `childName`: single value or comma-separated list
-- `productName`: single value or comma-separated list
-
-Example:
+Edit `childName` with a single value or comma-separated list.
+The script randomly picks one child each cycle.
 
 ```json
-"childName": "Child A,Child B,Child C",
-"productName": "Meal 1,Meal 2"
+"childName": "Child A,Child B,Child C"
 ```
 
-The script randomly chooses one child and one product each cycle.
+---
+
+### Product / Cart Configuration (4 modes)
+
+Choose ONE of the following modes. Priority order: `cartProducts` → `products` → `productName`.
+
+---
+
+#### Mode A — Legacy (default, backward-compatible)
+
+Comma-separated product names. One product picked at random each cycle. Quantity is always 1.
+
+```json
+"productName": "test for demo,StockTest"
+```
+
+Result per cycle example:
+```
+StockTest x1
+```
+
+---
+
+#### Mode B — Random Product + Random Quantity
+
+Define products as objects with a `qty` field. One product is picked at random each cycle.
+`qty` can be a fixed number or an array — if array, a random value is chosen.
+
+```json
+"products": [
+  { "name": "test for demo", "qty": [1, 2, 3] },
+  { "name": "StockTest",    "qty": 1 }
+]
+```
+
+Result per cycle example:
+```
+test for demo x3
+```
+
+---
+
+#### Mode C — Randomized Multi-Product Cart
+
+Define a pool of product names as strings. Each cycle, a random number of products
+(up to `maxProductsPerCart`) are picked with random quantities (up to `maxQtyPerProduct`).
+
+```json
+"products": ["test for demo", "StockTest", "Burger", "Juice"],
+"maxProductsPerCart": 3,
+"maxQtyPerProduct": 2
+```
+
+Result per cycle example:
+```
+StockTest x2
+Juice x1
+```
+
+---
+
+#### Mode D — Explicit Cart (no randomization)
+
+Define the exact cart to execute every cycle. All products are added in the listed order.
+
+```json
+"cartProducts": [
+  { "name": "test for demo", "qty": 2 },
+  { "name": "StockTest",    "qty": 1 }
+]
+```
+
+Result every cycle:
+```
+test for demo x2
+StockTest x1
+```
+
+---
+
+### Quantity Click Timing
+
+When `qty > 1`, the script clicks the same product repeatedly to increment quantity.
+A stabilization pause fires between each click so MAUI can process the increment.
+
+```json
+"delayBetweenQuantityClicksMs": 1000
+```
+
+Lower this only if your device/network is fast and cart updates are reliable.
 
 ## 6. Understanding Logs
 

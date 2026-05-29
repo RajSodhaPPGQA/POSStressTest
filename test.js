@@ -37,6 +37,8 @@ async function checkAppiumHealth() {
 // Utilities
 const { log } = require('./utils/logger');
 const { reconnectAdb, ensureAdbConnected, checkNetworkStatus, getAppMemoryUsage, resetUiAutomator2Server } = require('./utils/adb');
+const { generateCart } = require('./utils/cartGenerator');
+const perf = require('./utils/perfMetrics');
 
 // Page Objects
 const BasePage = require('./pages/BasePage');
@@ -186,7 +188,7 @@ async function setupAndEnterPOS(driver, unknownRecoveryAttempt = 0) {
     } catch (e) {
         log("SETUP_WARNING", `Failed to activate app via driver: ${e.message}`);
     }
-    await driver.pause(5000); // let page load
+    await driver.pause(8000); // let page fully load after crash recovery / cold start
 
     // Proactively clear any network failure or server error alerts
     try {
@@ -297,7 +299,7 @@ async function setupAndEnterPOS(driver, unknownRecoveryAttempt = 0) {
             // Before rebooting, allow late-rendering school/hierarchy screens to settle and re-detect.
             log("STATE_WARN", "Unknown state detected. Performing local re-detection before ADB reboot...");
             try {
-                await driver.pause(2500);
+                await driver.pause(6000); // give loading/splash screen more time to resolve
                 await BasePage.checkForAlertsAndDismiss(driver);
                 await BasePage.swipeUp(driver, 0.45);
                 await driver.pause(1200);
@@ -310,7 +312,17 @@ async function setupAndEnterPOS(driver, unknownRecoveryAttempt = 0) {
                 log("STATE_WARN", `Local re-detection failed: ${localRecoverErr.message}`);
             }
 
-            log("STATE_WARN", "⚠️ Unknown/Unrecognized screen state! Performing soft ADB reboot for safety...");
+            // Capture screenshot so we can see what unknown screen the app is on
+            try {
+                const fs = require('fs');
+                const screenshotDir = require('path').join(__dirname, 'screenshots');
+                if (!fs.existsSync(screenshotDir)) fs.mkdirSync(screenshotDir, { recursive: true });
+                const screenshotPath = require('path').join(screenshotDir, `unknown_state_${Date.now()}.png`);
+                await driver.saveScreenshot(screenshotPath);
+                log("STATE_WARN", `📸 Screenshot of unknown screen saved to: ${screenshotPath}`);
+            } catch (ssErr) {
+                log("STATE_WARN", `Failed to capture screenshot: ${ssErr.message}`);
+            }
             const targetUdid = driver.capabilities.udid;
             try {
                 execSync(`adb -s ${targetUdid} shell am force-stop com.parentpay.PointOfService`);
@@ -343,6 +355,9 @@ async function setupAndEnterPOS(driver, unknownRecoveryAttempt = 0) {
     await POSPage.clickName(driver);
     await driver.pause(5000);
 }
+
+// Cart generation is handled by utils/cartGenerator.js
+// Supports: cartProducts (explicit), products (random qty/random cart), productName (legacy)
 
 async function main() {
     log("SETUP", "Checking Appium server health at http://127.0.0.1:4723/status ...");
@@ -471,7 +486,6 @@ async function main() {
         };
 
         const childrenList = parseConfigList(config.childName || "10Thaprilposfix6");
-        const productsList = parseConfigList(config.productName || "test for");
 
         let cycle = 1;
 
@@ -520,9 +534,7 @@ async function main() {
                     ? childrenList[Math.floor(Math.random() * childrenList.length)]
                     : "10Thaprilposfix6";
 
-                const currentProduct = productsList.length > 0
-                    ? productsList[Math.floor(Math.random() * productsList.length)]
-                    : "test for";
+                const cartItems = generateCart(config);
 
                 // Clear popups/alerts
                 try {
@@ -547,33 +559,39 @@ async function main() {
                 });
 
                 const transactionPromise = (async () => {
+                    const cycleStart = Date.now();
+                    perf.startCycle();
+
                     const childSelectStart = Date.now();
                     await POSPage.selectChild(driver, currentChild);
-                    log("TIMING", `Child "${currentChild}" selected in ${Date.now() - childSelectStart}ms`);
+                    perf.record(perf.PHASES.CHILD_SELECTION, Date.now() - childSelectStart);
 
                     const delayAfterChild = config.delayAfterChildMs !== undefined ? config.delayAfterChildMs : 500;
                     await driver.pause(delayAfterChild);
 
                     const productSelectStart = Date.now();
-                    await POSPage.selectProduct(driver, currentProduct);
-                    log("TIMING", `Product "${currentProduct}" selected in ${Date.now() - productSelectStart}ms`);
+                    await POSPage.addProductsToCart(driver, cartItems);
+                    const cartLabel = cartItems.map(i => `${i.name}x${i.qty}`).join(', ');
+                    perf.record(perf.PHASES.CART_BUILD, Date.now() - productSelectStart);
 
                     const delayAfterProduct = config.delayAfterProductMs !== undefined ? config.delayAfterProductMs : 0;
                     await driver.pause(delayAfterProduct);
 
                     const walletClickStart = Date.now();
                     await POSPage.clickSelectWallet(driver);
-                    log("TIMING", `Wallet checkout opened in ${Date.now() - walletClickStart}ms`);
+                    perf.record(perf.PHASES.WALLET_SELECTION, Date.now() - walletClickStart);
 
                     const delayAfterWallet = config.delayAfterWalletMs !== undefined ? config.delayAfterWalletMs : 500;
                     await driver.pause(delayAfterWallet);
 
                     const payClickStart = Date.now();
                     await CheckoutPage.clickPay(driver);
-                    log("TIMING", `Payment completed in ${Date.now() - payClickStart}ms`);
+                    perf.record(perf.PHASES.PAYMENT, Date.now() - payClickStart);
 
                     const delayAfterPay = config.delayAfterPayMs !== undefined ? config.delayAfterPayMs : 500;
                     await driver.pause(delayAfterPay);
+
+                    perf.endCycle(Date.now() - cycleStart);
                 })();
 
                 // Race the transaction against the watchdog!
@@ -583,6 +601,7 @@ async function main() {
                 cycle++;
 
             } catch (cycleError) {
+                perf.cancelCycle(); // discard incomplete cycle from metrics
                 // Clear any watchdog timers
                 if (cycleError.message !== "WATCHDOG_TIMEOUT") {
                     // Suppress alerts if watchdog fires
@@ -678,6 +697,7 @@ async function main() {
         }
 
         log("SUCCESS", `Automation Run Complete! Successfully executed ${cycle - 1} cycles`);
+        perf.printSummary();
 
     } catch (error) {
         log("FATAL", `Automation failed: ${error.message}`);

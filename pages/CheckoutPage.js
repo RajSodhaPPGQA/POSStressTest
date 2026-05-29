@@ -18,17 +18,20 @@ class CheckoutPage {
     await BasePage.safeClick(driver, payButton, 1);
 
     // Fast-path wait for return to POS Main (State C) or Search Child (State D).
+    // Probes via $$ inside the predicate to avoid stale element refs and upfront network round-trips.
     const closeSelector = `android=new UiSelector().text("${locators.closeButton}")`;
-    const nameSelector = `android=new UiSelector().text("${locators.nameButton}")`;
-
-    const closeBtn = await driver.$(closeSelector);
-    const nameBtn = await driver.$(nameSelector);
+    const nameSelector  = `android=new UiSelector().text("${locators.nameButton}")`;
 
     await driver.waitUntil(
-      async () => (await closeBtn.isDisplayed().catch(() => false)) || (await nameBtn.isDisplayed().catch(() => false)),
+      async () => {
+        const closes = await driver.$$(closeSelector);
+        if (closes.length > 0 && await closes[0].isDisplayed().catch(() => false)) return true;
+        const names = await driver.$$(nameSelector);
+        return names.length > 0 && await names[0].isDisplayed().catch(() => false);
+      },
       {
         timeout: 45000,
-        interval: 75,
+        interval: 50,
         timeoutMsg: 'Expected post-payment screen to return to Name/CLOSE state'
       }
     );
