@@ -26,6 +26,11 @@ const PHASES = {
   CHILD_CLICK:        'childClick',       // duration of the safeClick call itself
   CHILD_TRANSITION:   'childTransition',  // post-click wait for screen to change (backend)
   CART_BUILD:         'cartBuild',
+  // ── Cart build sub-breakdown (instrumentation only) ──
+  PRODUCT_LOCATE:     'productLocate',
+  PRODUCT_CLICK:      'productClick',
+  CART_REFRESH:       'cartRefresh',
+  WALLET_READY:       'walletReady',
   WALLET_SELECTION:   'walletSelection',
   PAYMENT:            'payment',
   FULL_CYCLE:         'fullCycle',
@@ -185,6 +190,10 @@ function printSummary() {
   const avgChildClick      = avg(PHASES.CHILD_CLICK);
   const avgChildTransition = avg(PHASES.CHILD_TRANSITION);
   const avgCart    = avg(PHASES.CART_BUILD);
+  const avgProductLocate = avg(PHASES.PRODUCT_LOCATE);
+  const avgProductClick  = avg(PHASES.PRODUCT_CLICK);
+  const avgCartRefresh   = avg(PHASES.CART_REFRESH);
+  const avgWalletReady   = avg(PHASES.WALLET_READY);
   const avgWallet  = avg(PHASES.WALLET_SELECTION);
   const avgPayment = avg(PHASES.PAYMENT);
   const avgCycle   = avg(PHASES.FULL_CYCLE);
@@ -232,6 +241,23 @@ function printSummary() {
     log('PERF', `  Sub-phase sum            : ${_fmt(childSubSum)}  (delta from aggregate: ${childSubDelta >= 0 ? '+' : ''}${childSubDelta}ms)`);
     if (avgChildTransition > avgChild * 0.5) {
       log('PERF', `  ⚠  Transition is >50% of Child Selection — this is backend/MAUI navigation, not automation overhead.`);
+    }
+    _separator();
+  }
+
+  // Cart build sub-breakdown (only shown when sub-phase data exists)
+  const cartSubAvailable = avgProductLocate > 0 || avgProductClick > 0 || avgCartRefresh > 0 || avgWalletReady > 0;
+  if (cartSubAvailable) {
+    log('PERF', '--- Cart Build Sub-Breakdown ---');
+    log('PERF', `  Product Locate           : ${_fmt(avgProductLocate)} (${pct(avgProductLocate, avgCart)} of cart build)`);
+    log('PERF', `  Product Click            : ${_fmt(avgProductClick)} (${pct(avgProductClick, avgCart)} of cart build)`);
+    log('PERF', `  Cart Refresh             : ${_fmt(avgCartRefresh)} (${pct(avgCartRefresh, avgCart)} of cart build)  ← MAUI/cart settle pauses`);
+    log('PERF', `  Wallet Ready             : ${_fmt(avgWalletReady)} (${pct(avgWalletReady, avgCart)} of cart build)  ← backend enable transition`);
+    const cartSubSum = avgProductLocate + avgProductClick + avgCartRefresh + avgWalletReady;
+    const cartSubDelta = avgCart - cartSubSum;
+    log('PERF', `  Sub-phase sum            : ${_fmt(cartSubSum)}  (delta from aggregate: ${cartSubDelta >= 0 ? '+' : ''}${cartSubDelta}ms)`);
+    if (avgWalletReady > avgCart * 0.4) {
+      log('PERF', `  ⚠  Wallet Ready dominates cart build — backend/cart synchronization is the bottleneck.`);
     }
     _separator();
   }
@@ -289,6 +315,10 @@ function _phaseLabel(phase) {
     [PHASES.CHILD_CLICK]:      'Child click',
     [PHASES.CHILD_TRANSITION]: 'Child transition (backend)',
     [PHASES.CART_BUILD]:       'Cart build (product selection)',
+    [PHASES.PRODUCT_LOCATE]:   'Product locate',
+    [PHASES.PRODUCT_CLICK]:    'Product click',
+    [PHASES.CART_REFRESH]:     'Cart refresh',
+    [PHASES.WALLET_READY]:     'Wallet ready',
     [PHASES.WALLET_SELECTION]: 'Wallet selection',
     [PHASES.PAYMENT]:          'Payment processing',
     [PHASES.FULL_CYCLE]:       'Full cycle',

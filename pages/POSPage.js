@@ -29,13 +29,26 @@ class POSPage {
   static async _waitWalletEnabled(driver, timeoutMs = 3500, intervalMs = 30) {
     const selector = `android=new UiSelector().text("${locators.selectWalletButton}")`;
     const start = Date.now();
+    let pollCount = 0;
+    let firstVisibleAt = null;
+    let firstEnabledAt = null;
 
     while ((Date.now() - start) < timeoutMs) {
+      pollCount++;
       try {
         const matches = await driver.$$(selector);
         if (matches.length > 0) {
+          if (firstVisibleAt == null) {
+            firstVisibleAt = Date.now();
+          }
           const enabled = await matches[0].isEnabled();
-          if (enabled) return matches[0];
+          if (enabled) {
+            firstEnabledAt = Date.now();
+            log("TIMING", `Wallet Ready Polls = ${pollCount}`);
+            log("TIMING", `Wallet Ready Visible Wait = ${firstVisibleAt - start}ms`);
+            log("TIMING", `Wallet Ready Enable Wait = ${firstEnabledAt - start}ms`);
+            return matches[0];
+          }
         }
       } catch (err) {
         if (this._isFatalDriverError(err)) {
@@ -473,6 +486,11 @@ class POSPage {
       ? config.delayBetweenQuantityClicksMs
       : 1000;
 
+    // Cart-build sub-phase instrumentation (timing only; no behavior changes)
+    let _productLocateMs = 0;
+    let _productClickMs = 0;
+    let _cartRefreshMs = 0;
+
     // Log full cart before starting execution
     log("CART", `Executing cart (${cartItems.length} product${cartItems.length !== 1 ? 's' : ''}):`);
     for (const item of cartItems) {
@@ -491,6 +509,7 @@ class POSPage {
         const exactSelector    = `android=new UiSelector().text("${name}")`;
         const containsSelector = `android=new UiSelector().textContains("${name}")`;
         const isFirstClick     = click === 1;
+        const _locateStart = Date.now();
 
         // ── FAST PATH ──────────────────────────────────────────────────────────
         // Single immediate probe — no retries, no scroll.
@@ -551,13 +570,19 @@ class POSPage {
           }
         }
 
+        _productLocateMs += (Date.now() - _locateStart);
+
         try {
+          const _clickStart = Date.now();
           await BasePage.safeClick(driver, productEl);
+          _productClickMs += (Date.now() - _clickStart);
         } catch (clickErr) {
           log("PRODUCT_WARNING", `Click ${click}/${qty} on "${name}" failed: ${clickErr.message}. Re-locating and retrying...`);
           productEl = await BasePage.findElementContainsFast(driver, name);
           try {
+            const _retryClickStart = Date.now();
             await BasePage.safeClick(driver, productEl);
+            _productClickMs += (Date.now() - _retryClickStart);
           } catch (retryErr) {
             await BasePage.saveFailureScreenshot(driver, `product_click_fail_${name.replace(/\s+/g, '_')}_${click}`);
             throw new Error(`Failed to click product "${name}" (click ${click}/${qty}): ${retryErr.message}`);
@@ -568,14 +593,29 @@ class POSPage {
         // This ensures MAUI processes qty increments AND cart sync between different products.
         const isLastClickOfLastItem = isLastItem && click === qty;
         if (!isLastClickOfLastItem) {
+          const _refreshStart = Date.now();
           await driver.pause(delayBetweenQty);
+          _cartRefreshMs += (Date.now() - _refreshStart);
         }
       }
     }
 
     // After all products added: wait for wallet button to become enabled.
     // Fail fast if UiAutomator2 instrumentation/session crashes.
+    const _walletReadyStart = Date.now();
     await this._waitWalletEnabled(driver, 15000, 30);
+    const _walletReadyMs = Date.now() - _walletReadyStart;
+
+    log("TIMING", `Product Locate = ${_productLocateMs}ms`);
+    log("TIMING", `Product Click = ${_productClickMs}ms`);
+    log("TIMING", `Cart Refresh = ${_cartRefreshMs}ms`);
+    log("TIMING", `Wallet Ready = ${_walletReadyMs}ms`);
+
+    perf.record(perf.PHASES.PRODUCT_LOCATE, _productLocateMs);
+    perf.record(perf.PHASES.PRODUCT_CLICK, _productClickMs);
+    perf.record(perf.PHASES.CART_REFRESH, _cartRefreshMs);
+    perf.record(perf.PHASES.WALLET_READY, _walletReadyMs);
+
     _state.menuLoaded = true;
   }
 
