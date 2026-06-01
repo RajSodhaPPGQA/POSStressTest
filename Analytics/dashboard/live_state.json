@@ -1,0 +1,263 @@
+{
+  "updatedAt": "2026-05-29T15:09:11.626Z",
+  "metrics": {
+    "currentCycle": 49,
+    "ordersPerMinute": "9.9",
+    "successRate": "0.0%",
+    "recoveries": 0,
+    "reconnects": 0,
+    "runStatus": "RUNNING"
+  },
+  "events": [
+    {
+      "time": "2026-05-29T15:09:11.016Z",
+      "type": "INFO",
+      "message": "event-49"
+    },
+    {
+      "time": "2026-05-29T15:09:11.016Z",
+      "type": "INFO",
+      "message": "event-48"
+    },
+    {
+      "time": "2026-05-29T15:09:11.016Z",
+      "type": "INFO",
+      "message": "event-47"
+    },
+    {
+      "time": "2026-05-29T15:09:11.015Z",
+      "type": "INFO",
+      "message": "event-46"
+    },
+    {
+      "time": "2026-05-29T15:09:11.015Z",
+      "type": "INFO",
+      "message": "event-45"
+    },
+    {
+      "time": "2026-05-29T15:09:11.015Z",
+      "type": "INFO",
+      "message": "event-44"
+    },
+    {
+      "time": "2026-05-29T15:09:11.015Z",
+      "type": "INFO",
+      "message": "event-43"
+    },
+    {
+      "time": "2026-05-29T15:09:11.015Z",
+      "type": "INFO",
+      "message": "event-42"
+    },
+    {
+      "time": "2026-05-29T15:09:11.015Z",
+      "type": "INFO",
+      "message": "event-41"
+    },
+    {
+      "time": "2026-05-29T15:09:11.015Z",
+      "type": "INFO",
+      "message": "event-40"
+    },
+    {
+      "time": "2026-05-29T15:09:11.015Z",
+      "type": "INFO",
+      "message": "event-39"
+    },
+    {
+      "time": "2026-05-29T15:09:11.015Z",
+      "type": "INFO",
+      "message": "event-38"
+    },
+    {
+      "time": "2026-05-29T15:09:11.015Z",
+      "type": "INFO",
+      "message": "event-37"
+    },
+    {
+      "time": "2026-05-29T15:09:11.014Z",
+      "type": "INFO",
+      "message": "event-36"
+    },
+    {
+      "time": "2026-05-29T15:09:11.014Z",
+      "type": "INFO",
+      "message": "event-35"
+    },
+    {
+      "time": "2026-05-29T15:09:11.014Z",
+      "type": "INFO",
+      "message": "event-34"
+    },
+    {
+      "time": "2026-05-29T15:09:11.014Z",
+      "type": "INFO",
+      "message": "event-33"
+    },
+    {
+      "time": "2026-05-29T15:09:11.014Z",
+      "type": "INFO",
+      "message": "event-32"
+    },
+    {
+      "time": "2026-05-29T15:09:11.014Z",
+      "type": "INFO",
+      "message": "event-31"
+    },
+    {
+      "time": "2026-05-29T15:09:11.014Z",
+      "type": "INFO",
+      "message": "event-30"
+    },
+    {
+      "time": "2026-05-29T15:09:11.014Z",
+      "type": "INFO",
+      "message": "event-29"
+    },
+    {
+      "time": "2026-05-29T15:09:11.014Z",
+      "type": "INFO",
+      "message": "event-28"
+    },
+    {
+      "time": "2026-05-29T15:09:11.014Z",
+      "type": "INFO",
+      "message": "event-27"
+    },
+    {
+      "time": "2026-05-29T15:09:11.014Z",
+      "type": "INFO",
+      "message": "event-26"
+    },
+    {
+      "time": "2026-05-29T15:09:11.014Z",
+      "type": "INFO",
+      "message": "event-25"
+    },
+    {
+      "time": "2026-05-29T15:09:11.014Z",
+      "type": "INFO",
+      "message": "event-24"
+    },
+    {
+      "time": "2026-05-29T15:09:11.014Z",
+      "type": "INFO",
+      "message": "event-23"
+    },
+    {
+      "time": "2026-05-29T15:09:11.014Z",
+      "type": "INFO",
+      "message": "event-22"
+    },
+    {
+      "time": "2026-05-29T15:09:11.014Z",
+      "type": "INFO",
+      "message": "event-21"
+    },
+    {
+      "time": "2026-05-29T15:09:11.014Z",
+      "type": "INFO",
+      "message": "event-20"
+    },
+    {
+      "time": "2026-05-29T15:09:11.014Z",
+      "type": "INFO",
+      "message": "event-19"
+    },
+    {
+      "time": "2026-05-29T15:09:11.014Z",
+      "type": "INFO",
+      "message": "event-18"
+    },
+    {
+      "time": "2026-05-29T15:09:11.014Z",
+      "type": "INFO",
+      "message": "event-17"
+    },
+    {
+      "time": "2026-05-29T15:09:11.014Z",
+      "type": "INFO",
+      "message": "event-16"
+    },
+    {
+      "time": "2026-05-29T15:09:11.014Z",
+      "type": "INFO",
+      "message": "event-15"
+    },
+    {
+      "time": "2026-05-29T15:09:11.014Z",
+      "type": "INFO",
+      "message": "event-14"
+    },
+    {
+      "time": "2026-05-29T15:09:11.014Z",
+      "type": "INFO",
+      "message": "event-13"
+    },
+    {
+      "time": "2026-05-29T15:09:11.014Z",
+      "type": "INFO",
+      "message": "event-12"
+    },
+    {
+      "time": "2026-05-29T15:09:11.014Z",
+      "type": "INFO",
+      "message": "event-11"
+    },
+    {
+      "time": "2026-05-29T15:09:11.014Z",
+      "type": "INFO",
+      "message": "event-10"
+    },
+    {
+      "time": "2026-05-29T15:09:11.014Z",
+      "type": "INFO",
+      "message": "event-9"
+    },
+    {
+      "time": "2026-05-29T15:09:11.014Z",
+      "type": "INFO",
+      "message": "event-8"
+    },
+    {
+      "time": "2026-05-29T15:09:11.014Z",
+      "type": "INFO",
+      "message": "event-7"
+    },
+    {
+      "time": "2026-05-29T15:09:11.014Z",
+      "type": "INFO",
+      "message": "event-6"
+    },
+    {
+      "time": "2026-05-29T15:09:11.014Z",
+      "type": "INFO",
+      "message": "event-5"
+    },
+    {
+      "time": "2026-05-29T15:09:11.013Z",
+      "type": "INFO",
+      "message": "event-4"
+    },
+    {
+      "time": "2026-05-29T15:09:11.013Z",
+      "type": "INFO",
+      "message": "event-3"
+    },
+    {
+      "time": "2026-05-29T15:09:11.013Z",
+      "type": "INFO",
+      "message": "event-2"
+    },
+    {
+      "time": "2026-05-29T15:09:11.013Z",
+      "type": "INFO",
+      "message": "event-1"
+    },
+    {
+      "time": "2026-05-29T15:09:11.012Z",
+      "type": "INFO",
+      "message": "event-0"
+    }
+  ]
+}

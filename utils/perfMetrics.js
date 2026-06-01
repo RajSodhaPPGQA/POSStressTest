@@ -292,6 +292,50 @@ function printSummary() {
   _separator();
 }
 
+function getSummaryData() {
+  const n = _cycles.length;
+  if (n === 0) {
+    return {
+      completedCycles: 0,
+      ordersPerMinute: 'N/A',
+      averageCycleMs: 0,
+      phaseAveragesMs: {
+        childSelection: 0,
+        cartBuild: 0,
+        walletSelection: 0,
+        payment: 0,
+      },
+      bottlenecks: [],
+    };
+  }
+
+  const avg = (phase) => _avg(_cycles.map(c => c[phase]).filter(v => v != null));
+  const avgChild = avg(PHASES.CHILD_SELECTION);
+  const avgCart = avg(PHASES.CART_BUILD);
+  const avgWallet = avg(PHASES.WALLET_SELECTION);
+  const avgPayment = avg(PHASES.PAYMENT);
+  const avgCycle = avg(PHASES.FULL_CYCLE);
+  const phaseAvgs = [
+    { label: 'Child Selection', ms: avgChild },
+    { label: 'Cart Build', ms: avgCart },
+    { label: 'Wallet Selection', ms: avgWallet },
+    { label: 'Payment', ms: avgPayment },
+  ].sort((a, b) => b.ms - a.ms);
+
+  return {
+    completedCycles: n,
+    ordersPerMinute: avgCycle > 0 ? (60000 / avgCycle).toFixed(1) : 'N/A',
+    averageCycleMs: avgCycle,
+    phaseAveragesMs: {
+      childSelection: avgChild,
+      cartBuild: avgCart,
+      walletSelection: avgWallet,
+      payment: avgPayment,
+    },
+    bottlenecks: phaseAvgs,
+  };
+}
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function _avg(arr) {
@@ -495,4 +539,4 @@ function _printRecommendations(avgChild, avgCart, avgWallet, avgPayment, avgCycl
   }
 }
 
-module.exports = { PHASES, startCycle, record, endCycle, cancelCycle, printSummary, logRollingOPM, recordFastpath, recordLocateBreakdown };
+module.exports = { PHASES, startCycle, record, endCycle, cancelCycle, printSummary, getSummaryData, logRollingOPM, recordFastpath, recordLocateBreakdown };

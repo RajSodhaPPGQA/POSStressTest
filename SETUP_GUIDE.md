@@ -142,11 +142,36 @@ From project root:
 node test.js
 ```
 
+## 7A. One-Click Windows Launcher (Recommended for Testers)
+
+For non-technical users, use the batch launchers from Windows Explorer:
+
+1. Double-click `Start_Appium.bat` to start the Appium server.
+2. Double-click `Run_POS_Automation.bat` to run the automation.
+
+### Launcher Files:
+- `Start_Appium.bat` - starts Appium.
+- `Run_POS_Automation.bat` - runs the automation entry point.
+
+These scripts replace the need for manual steps in Sections 5 and 7.
+
 ## 8. Output and Artifacts
 
 - Runtime logs are printed to terminal with timestamp and level.
 - Failure screenshots are written to `screenshots/` as:
   - `error_<context>_<timestamp>.png`
+- Appium server output is visible in the `Start_Appium.bat` terminal window while it is running.
+- Analytics artifacts are written under `Analytics/`:
+  - `Analytics/reports/report_yyyy-MM-dd_HHmm.html` (timestamped HTML report)
+  - `Analytics/reports/report.xlsx` (management-friendly Excel export)
+  - `Analytics/dashboard/live_state.json` (live dashboard persisted state)
+
+## 8A. Live Dashboard
+
+- Live dashboard URL (default): `http://127.0.0.1:5050`
+- Configure in `config.json`:
+  - `liveDashboardEnabled`: `true` / `false`
+  - `liveDashboardPort`: e.g. `5050`
 
 ## 9. Quick Troubleshooting
 
@@ -155,6 +180,12 @@ node test.js
 1. Confirm Appium server is running on port 4723
 2. Confirm device appears in `adb devices`
 3. Reconnect Wi-Fi device: `adb connect <ip:port>`
+
+### Dashboard Not Opening
+
+1. Confirm dashboard is enabled in `config.json` (`liveDashboardEnabled: true`)
+2. Check port conflicts for `liveDashboardPort`
+3. Open the local URL directly: `http://127.0.0.1:<liveDashboardPort>`
 
 ### Device Offline / Disconnected
 

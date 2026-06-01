@@ -1,6 +1,7 @@
 const { execSync } = require('child_process');
 const { log } = require('./logger');
 const config = require('../config.json');
+const stability = require('./stabilityMetrics');
 
 /**
  * Reconnects wireless ADB if it matches IP pattern
@@ -9,6 +10,7 @@ function reconnectAdb(udid) {
   const ipPattern = /^(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):(\d{1,5})$/;
   const match = udid.match(ipPattern);
   if (match) {
+    stability.increment('adbReconnects');
     const ip = match[1];
     const port = match[2];
     log("ADB", `Attempting auto-reconnect to wireless UDID ${ip}:${port}...`);

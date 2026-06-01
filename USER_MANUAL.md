@@ -38,6 +38,15 @@ node test.js
 
 If multiple devices are connected, the script may ask you to choose a device.
 
+### One-Click Windows Run (No Terminal Needed)
+
+Double-click the following scripts in sequence:
+
+1. `Start_Appium.bat` - Starts the Appium server.
+2. `Run_POS_Automation.bat` - Runs the automation entry point.
+
+These scripts replace the need for manual steps and ensure a streamlined process for testers.
+
 ## 4. Run Modes
 
 ### Duration Mode
@@ -176,6 +185,19 @@ Common levels:
 - `CRASH`: crash/relaunch handling
 - `SUCCESS`: run completion
 
+Analytics outputs are created under `Analytics/`:
+
+- `Analytics/reports/report_yyyy-MM-dd_HHmm.html`
+- `Analytics/reports/report.xlsx`
+- `Analytics/dashboard/live_state.json`
+
+Live dashboard (real-time):
+
+- Default URL: `http://127.0.0.1:5050`
+- Config keys:
+  - `liveDashboardEnabled`
+  - `liveDashboardPort`
+
 ## 7. Failure Screenshots
 
 On major failures, screenshots are automatically saved in `screenshots/`.
@@ -241,4 +263,5 @@ Actions:
 
 ## 11. End of Run
 
-At completion, script prints success summary and closes Appium session automatically.
+At completion, script prints success/stability summaries, closes Appium session automatically,
+and writes updated analytics reports under `Analytics/reports/`.

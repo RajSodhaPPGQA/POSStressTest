@@ -39,6 +39,11 @@ const { log } = require('./utils/logger');
 const { reconnectAdb, ensureAdbConnected, checkNetworkStatus, getAppMemoryUsage, resetUiAutomator2Server } = require('./utils/adb');
 const { generateCart } = require('./utils/cartGenerator');
 const perf = require('./utils/perfMetrics');
+const stability = require('./utils/stabilityMetrics');
+const { generateReport } = require('./utils/htmlReport');
+const { generateExcelReport } = require('./utils/excelReport');
+const { createLongRunAnalytics } = require('./utils/longRunAnalytics');
+const { startLiveDashboard } = require('./utils/liveDashboard');
 
 // Page Objects
 const BasePage = require('./pages/BasePage');
@@ -90,6 +95,9 @@ async function createDriverSession(targetUdid, reason = 'startup') {
             log("SETUP", `Creating Appium session (${reason}) attempt ${attempt}/${attempts}...`);
             const driver = await remote(buildRemoteOptions(targetUdid));
             await driver.getWindowSize();
+            if (reason !== 'initial') {
+                stability.increment('sessionRebuilds');
+            }
             return driver;
         } catch (e) {
             lastError = e;
@@ -137,13 +145,39 @@ async function getDeviceUdid() {
         // adb not available or failed
     }
 
+    // If config.udid exists but not connected, try adb connect
     if (config.udid) {
         log("SETUP", `Configured UDID found in config.json: "${config.udid}"`);
         if (devices.includes(config.udid)) {
             log("SETUP", `Device is currently connected! Auto-selecting it.`);
             return config.udid;
         } else {
-            log("SETUP", `Warning: Configured device "${config.udid}" is not shown in 'adb devices'.`);
+            // Try adb connect if looks like IP:PORT
+            const ipPattern = /^(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):(\d{1,5})$/;
+            if (ipPattern.test(config.udid)) {
+                log("SETUP", `Device not connected, attempting 'adb connect' to ${config.udid}...`);
+                try {
+                    execSync(`adb connect ${config.udid}`);
+                    // Recheck devices
+                    const output2 = execSync('adb devices').toString();
+                    const lines2 = output2.trim().split('\n');
+                    for (let i = 1; i < lines2.length; i++) {
+                        const line = lines2[i].trim();
+                        if (line) {
+                            const parts = line.split(/\s+/);
+                            if (parts[1] === 'device') {
+                                devices.push(parts[0]);
+                            }
+                        }
+                    }
+                    if (devices.includes(config.udid)) {
+                        log("SETUP", `Device connected via adb connect!`);
+                        return config.udid;
+                    }
+                } catch (e) {
+                    log("SETUP_WARNING", `adb connect failed: ${e.message}`);
+                }
+            }
         }
     }
 
@@ -152,22 +186,22 @@ async function getDeviceUdid() {
         return devices[0];
     }
 
-    console.log("\n--- ADB Device Selection ---");
-    if (devices.length > 0) {
-        devices.forEach((dev, idx) => {
-            console.log(`[${idx + 1}] ${dev}`);
-        });
-        console.log(`[${devices.length + 1}] Enter custom UDID manually`);
-
-        const selection = await askQuestion(`Select device (1-${devices.length + 1}): `);
-        const selIdx = parseInt(selection) - 1;
-
-        if (selIdx >= 0 && selIdx < devices.length) {
-            log("SETUP", `Selected device: "${devices[selIdx]}"`);
-            return devices[selIdx];
-        }
+    if (devices.length === 0) {
+        throw new Error("No Android device detected via ADB. Please connect a device (USB or wireless) and try again.");
     }
 
+    // Multiple devices: prompt user
+    console.log("\n--- ADB Device Selection ---");
+    devices.forEach((dev, idx) => {
+        console.log(`[${idx + 1}] ${dev}`);
+    });
+    console.log(`[${devices.length + 1}] Enter custom UDID manually`);
+    const selection = await askQuestion(`Select device (1-${devices.length + 1}): `);
+    const selIdx = parseInt(selection) - 1;
+    if (selIdx >= 0 && selIdx < devices.length) {
+        log("SETUP", `Selected device: "${devices[selIdx]}"`);
+        return devices[selIdx];
+    }
     const customUdid = await askQuestion("Enter device UDID manually (e.g. 192.168.4.34:33023): ");
     if (!customUdid) {
         throw new Error("No device UDID entered. Exiting.");
@@ -314,12 +348,7 @@ async function setupAndEnterPOS(driver, unknownRecoveryAttempt = 0) {
 
             // Capture screenshot so we can see what unknown screen the app is on
             try {
-                const fs = require('fs');
-                const screenshotDir = require('path').join(__dirname, 'screenshots');
-                if (!fs.existsSync(screenshotDir)) fs.mkdirSync(screenshotDir, { recursive: true });
-                const screenshotPath = require('path').join(screenshotDir, `unknown_state_${Date.now()}.png`);
-                await driver.saveScreenshot(screenshotPath);
-                log("STATE_WARN", `📸 Screenshot of unknown screen saved to: ${screenshotPath}`);
+                await BasePage.saveFailureScreenshot(driver, 'unknown_state');
             } catch (ssErr) {
                 log("STATE_WARN", `Failed to capture screenshot: ${ssErr.message}`);
             }
@@ -327,6 +356,7 @@ async function setupAndEnterPOS(driver, unknownRecoveryAttempt = 0) {
             try {
                 execSync(`adb -s ${targetUdid} shell am force-stop com.parentpay.PointOfService`);
                 execSync(`adb -s ${targetUdid} shell am start -n com.parentpay.PointOfService/com.parentpay.PointOfService.MainActivity`);
+                stability.increment('appRestarts');
             } catch (adbErr) {
                 log("ADB_WARNING", `Failed to reboot app during recovery: ${adbErr.message}`);
             }
@@ -360,20 +390,124 @@ async function setupAndEnterPOS(driver, unknownRecoveryAttempt = 0) {
 // Supports: cartProducts (explicit), products (random qty/random cart), productName (legacy)
 
 async function main() {
+    stability.startRun();
+    const executionStart = new Date();
+    let runStatus = 'SUCCESS';
+    let targetUdid = '';
+    let driver;
+    let dashboard = null;
+    const cycleRows = [];
+    const longRun = createLongRunAnalytics();
+    const executionMeta = {
+        deviceName: 'Unknown',
+        androidVersion: 'Unknown',
+        appiumVersion: 'Unknown'
+    };
+
+    try {
+        executionMeta.appiumVersion = execSync('appium --version').toString().trim();
+    } catch (e) {}
+
+    try {
+        if (config.liveDashboardEnabled !== false) {
+            const dashPort = config.liveDashboardPort || 5050;
+            dashboard = await startLiveDashboard({ port: dashPort });
+            log("DASHBOARD", `Live dashboard started: ${dashboard.url}`);
+        }
+    } catch (e) {
+        log("DASHBOARD_WARNING", `Live dashboard disabled due to startup issue: ${e.message}`);
+    }
+
+    const addDashboardEvent = (type, message) => {
+        if (!dashboard) return;
+        dashboard.addEvent(type, message);
+    };
+
+    const updateDashboardMetrics = (currentCycle) => {
+        if (!dashboard) return;
+        const s = stability.getSummaryData();
+        const elapsedMin = (Date.now() - executionStart.getTime()) / 60000;
+        const opm = elapsedMin > 0 ? (s.cyclesCompleted / elapsedMin).toFixed(1) : '0.0';
+        dashboard.updateMetrics({
+            currentCycle,
+            ordersPerMinute: opm,
+            successRate: s.successRate,
+            recoveries: s.recoveredFailures,
+            reconnects: s.adbReconnects,
+            runStatus,
+        });
+    };
+
     log("SETUP", "Checking Appium server health at http://127.0.0.1:4723/status ...");
     try {
         await checkAppiumHealth();
         log("SETUP", "Appium server is healthy and ready.");
     } catch (e) {
         log("FATAL", `Appium server health check failed: ${e.message}`);
-        process.exit(1);
+        runStatus = 'FAILED';
+        addDashboardEvent('FATAL', `Appium health check failed: ${e.message}`);
+        updateDashboardMetrics(0);
+        stability.markFatalFailure(stability.classifyFailureReason(e.message));
+        stability.printSummary('FAILED');
+        longRun.printSummary();
+        try {
+            const perfSummary = perf.getSummaryData();
+            const stabilitySummary = stability.getSummaryData();
+            const longRunSummary = longRun.getSummaryData();
+            const reportPath = generateReport({
+                status: runStatus,
+                startTime: executionStart,
+                endTime: new Date(),
+                metadata: executionMeta,
+                performance: perfSummary,
+                stability: stabilitySummary,
+                longRun: longRunSummary,
+            });
+            log("REPORT", `HTML report generated: ${reportPath}`);
+
+            const excelPath = await generateExcelReport({
+                cycleRows,
+                summary: {
+                    successRate: stabilitySummary.successRate,
+                    failureRate: stabilitySummary.failureRate,
+                    ordersPerMinute: perfSummary.ordersPerMinute,
+                    recoveries: stabilitySummary.recoveredFailures,
+                    reconnects: stabilitySummary.adbReconnects,
+                    longRun: {
+                        slowdownDetected: longRunSummary.slowdown?.detected,
+                        slowdownPercent: longRunSummary.slowdown?.slowdownPercent,
+                        memoryLeakDetected: longRunSummary.memoryLeak?.detected,
+                        recoverySpikesDetected: longRunSummary.recoverySpikes?.detected,
+                    },
+                },
+            });
+            log("REPORT", `Excel report generated: ${excelPath}`);
+        } catch (reportErr) {
+            log("REPORT_WARNING", `Failed to generate report output: ${reportErr.message}`);
+        }
+        if (dashboard) {
+            try {
+                await dashboard.close();
+                log("DASHBOARD", "Live dashboard stopped");
+            } catch (e2) {
+                log("DASHBOARD_WARNING", `Dashboard stop warning: ${e2.message}`);
+            }
+        }
+        return;
     }
     // Proactively check wireless ADB reconnection
     if (config.udid) {
-        reconnectAdb(config.udid);
+        if (reconnectAdb(config.udid)) {
+            addDashboardEvent('ADB', 'ADB reconnect successful');
+        }
     }
 
-    const targetUdid = await getDeviceUdid();
+    targetUdid = await getDeviceUdid();
+
+    try {
+        executionMeta.deviceName = execSync(`adb -s ${targetUdid} shell getprop ro.product.model`).toString().trim() || 'Unknown';
+        executionMeta.androidVersion = execSync(`adb -s ${targetUdid} shell getprop ro.build.version.release`).toString().trim() || 'Unknown';
+    } catch (e) {}
 
     // Ensure connection state is stable before starting Appium session
     ensureAdbConnected(targetUdid);
@@ -401,7 +535,9 @@ async function main() {
         log("ADB_WARNING", `ADB initial launch sequence warning: ${adbError.message}`);
     }
 
-    let driver = await createDriverSession(targetUdid, 'initial');
+    driver = await createDriverSession(targetUdid, 'initial');
+    addDashboardEvent('SESSION', 'Initial session created');
+    updateDashboardMetrics(0);
 
     try {
         let setupSuccess = false;
@@ -440,7 +576,9 @@ async function main() {
                             await driver.deleteSession();
                         } catch (e) { }
 
-                        reconnectAdb(targetUdid);
+                        if (reconnectAdb(targetUdid)) {
+                            addDashboardEvent('ADB', 'ADB reconnect successful');
+                        }
                         ensureAdbConnected(targetUdid);
                         resetUiAutomator2Server(targetUdid);
 
@@ -454,13 +592,16 @@ async function main() {
                         try {
                             log("ADB", `Launching app via ADB on device: "${targetUdid}"...`);
                             execSync(`adb -s ${targetUdid} shell am start -n com.parentpay.PointOfService/com.parentpay.PointOfService.MainActivity`);
+                            stability.increment('appRestarts');
                         } catch (adbError) {
                             log("ADB_WARNING", `ADB launch warning: ${adbError.message}`);
                         }
 
                         driver = await createDriverSession(targetUdid, 'startup-crash-recovery');
+                        addDashboardEvent('SESSION', 'Session recreated (startup recovery)');
                     } catch (e) {
                         log("CRITICAL", `Failed to relaunch driver during startup setup recovery: ${e.message}`);
+                        addDashboardEvent('CRITICAL', `Startup recovery failed: ${e.message}`);
                     }
                 } else {
                     if (setupRetries >= 5) {
@@ -499,6 +640,8 @@ async function main() {
 
         while (shouldContinue()) {
             const elapsedMins = ((Date.now() - startTime) / 60000).toFixed(1);
+            const cycleAttemptStart = Date.now();
+            updateDashboardMetrics(cycle);
             if (runMode === "cycles") {
                 log("CYCLE", `Starting Cycle #${cycle} of ${maxCycles}`);
             } else {
@@ -514,6 +657,7 @@ async function main() {
                     checkNetworkStatus(targetUdid);
                     const memUsage = getAppMemoryUsage(targetUdid);
                     if (memUsage) {
+                        longRun.recordMemory(cycle, memUsage.mb);
                         log("MEMORY", `App heap size: ${memUsage.mb} MB (${memUsage.kb} KB)`);
                         const limit = config.maxMemoryLimitMb;
                         if (limit && memUsage.mb > limit) {
@@ -598,16 +742,29 @@ async function main() {
                 await Promise.race([transactionPromise, watchdogPromise]);
                 clearTimeout(watchdogTimerId);
 
+                stability.recordCycleSuccess();
+                longRun.recordCycleDuration(cycle, Date.now() - cycleAttemptStart);
+                cycleRows.push({
+                    cycle,
+                    status: 'PASS',
+                    durationMs: Date.now() - cycleAttemptStart,
+                    recovery: 'No',
+                });
+                addDashboardEvent('CYCLE', `Cycle ${cycle} completed successfully`);
+                perf.logRollingOPM(cycle);
                 cycle++;
+                updateDashboardMetrics(cycle);
 
             } catch (cycleError) {
                 perf.cancelCycle(); // discard incomplete cycle from metrics
+                stability.recordCycleFailure(stability.classifyFailureReason(cycleError.message));
                 // Clear any watchdog timers
                 if (cycleError.message !== "WATCHDOG_TIMEOUT") {
                     // Suppress alerts if watchdog fires
                 }
 
                 log("ERROR", `Cycle #${cycle} failed: ${cycleError.message}`);
+                addDashboardEvent('ERROR', `Cycle ${cycle} failed: ${cycleError.message}`);
 
                 const errStr = (cycleError.message || "").toLowerCase();
                 const isWatchdog = cycleError.message === "WATCHDOG_TIMEOUT";
@@ -626,6 +783,8 @@ async function main() {
                     errStr.includes("hang up");
 
                 if (isCrash) {
+                    let recoverySucceeded = true;
+                    let recoveredThisCycle = false;
                     const skipScreenshotOnDeadSession = errStr.includes("instrumentation") || errStr.includes("socket") || errStr.includes("session");
 
                     if (isProactiveMemRecycle) {
@@ -635,6 +794,7 @@ async function main() {
                             try { await driver.terminateApp('com.parentpay.PointOfService'); } catch (e) { }
                             await driver.pause(1500);
                             await driver.activateApp('com.parentpay.PointOfService');
+                            stability.increment('appRestarts');
                             await driver.pause(3000);
                             await setupAndEnterPOS(driver);
                             log("RELAUNCH", "Memory recycle complete. Resuming ordering loop...");
@@ -643,9 +803,19 @@ async function main() {
                             try { await driver.deleteSession(); } catch (e) { }
                             resetUiAutomator2Server(targetUdid);
                             try { execSync(`adb -s ${targetUdid} shell am force-stop com.parentpay.PointOfService`); } catch (e) { }
-                            try { execSync(`adb -s ${targetUdid} shell am start -n com.parentpay.PointOfService/com.parentpay.PointOfService.MainActivity`); } catch (e) { }
-                            driver = await createDriverSession(targetUdid, 'mem-recycle-fallback');
-                            await setupAndEnterPOS(driver);
+                            try {
+                                execSync(`adb -s ${targetUdid} shell am start -n com.parentpay.PointOfService/com.parentpay.PointOfService.MainActivity`);
+                                stability.increment('appRestarts');
+                            } catch (e) { }
+                            try {
+                                driver = await createDriverSession(targetUdid, 'mem-recycle-fallback');
+                                await setupAndEnterPOS(driver);
+                                addDashboardEvent('SESSION', 'Session recreated (mem fallback)');
+                            } catch (fallbackErr) {
+                                recoverySucceeded = false;
+                                log("CRITICAL", `Memory recycle fallback failed: ${fallbackErr.message}`);
+                                addDashboardEvent('CRITICAL', `Memory fallback failed: ${fallbackErr.message}`);
+                            }
                         }
                     } else {
                         // FULL CRASH PATH: watchdog / real crash — full session teardown and recreation
@@ -664,7 +834,9 @@ async function main() {
                         try {
                             try { await driver.deleteSession(); } catch (e) { }
 
-                            reconnectAdb(targetUdid);
+                            if (reconnectAdb(targetUdid)) {
+                                addDashboardEvent('ADB', 'ADB reconnect successful');
+                            }
                             ensureAdbConnected(targetUdid);
                             resetUiAutomator2Server(targetUdid);
 
@@ -674,39 +846,130 @@ async function main() {
 
                             try {
                                 execSync(`adb -s ${targetUdid} shell am start -n com.parentpay.PointOfService/com.parentpay.PointOfService.MainActivity`);
+                                stability.increment('appRestarts');
                             } catch (adbError) { log("ADB_WARNING", `launch warning: ${adbError.message}`); }
 
                             log("SETUP", "Relaunching Appium session...");
                             driver = await createDriverSession(targetUdid, 'cycle-crash-recovery');
+                            addDashboardEvent('SESSION', 'Session recreated');
 
                             await setupAndEnterPOS(driver);
                             log("SETUP", "Relaunch and State recovery successful! Resuming ordering loop...");
+                            addDashboardEvent('RECOVERY', 'Crash recovery successful');
                         } catch (relaunchError) {
+                            recoverySucceeded = false;
                             log("CRITICAL", `Relaunch failed: ${relaunchError.message}`);
+                            addDashboardEvent('CRITICAL', `Relaunch failed: ${relaunchError.message}`);
                             await sleep(5000);
                         }
                     }
+                    if (recoverySucceeded) {
+                        recoveredThisCycle = true;
+                        longRun.recordRecovery(cycle);
+                        stability.markRecoveredFailure();
+                        addDashboardEvent('RECOVERY', 'Cycle recovered and resumed');
+                    }
+                    longRun.recordCycleDuration(cycle, Date.now() - cycleAttemptStart);
+                    cycleRows.push({
+                        cycle,
+                        status: 'FAIL',
+                        durationMs: Date.now() - cycleAttemptStart,
+                        recovery: recoveredThisCycle ? 'Yes' : 'No',
+                    });
+                    updateDashboardMetrics(cycle);
                 } else {
                     log("RECOVERY", "Attempting to recover in-session and continue to next cycle...");
                     try {
-                        await BasePage.checkForAlertsAndDismiss(driver);
+                        const popupRecovered = await BasePage.checkForAlertsAndDismiss(driver);
+                        if (popupRecovered) {
+                            addDashboardEvent('RECOVERY', 'Socket popup recovered');
+                        }
                     } catch (e) {}
                     await driver.pause(5000);
+                    longRun.recordRecovery(cycle);
+                    longRun.recordCycleDuration(cycle, Date.now() - cycleAttemptStart);
+                    stability.markRecoveredFailure();
+                    cycleRows.push({
+                        cycle,
+                        status: 'FAIL',
+                        durationMs: Date.now() - cycleAttemptStart,
+                        recovery: 'Yes',
+                    });
+                    updateDashboardMetrics(cycle);
                 }
             }
         }
 
         log("SUCCESS", `Automation Run Complete! Successfully executed ${cycle - 1} cycles`);
+        runStatus = 'SUCCESS';
         perf.printSummary();
+        stability.printSummary('SUCCESS');
+        longRun.printSummary();
+        addDashboardEvent('SUCCESS', `Run complete. Executed ${cycle - 1} cycles`);
+        updateDashboardMetrics(cycle - 1);
 
     } catch (error) {
         log("FATAL", `Automation failed: ${error.message}`);
+        runStatus = 'FAILED';
+        stability.markFatalFailure(stability.classifyFailureReason(error.message));
+        stability.printSummary('FAILED');
+        longRun.printSummary();
+        addDashboardEvent('FATAL', error.message);
+        updateDashboardMetrics(0);
     } finally {
         try {
-            await driver.deleteSession();
+            if (driver) {
+                await driver.deleteSession();
+            }
         } catch (e) {
             log("SETUP_WARNING", `Session already closed/unavailable during teardown: ${e.message}`);
         }
+
+        try {
+            const perfSummary = perf.getSummaryData();
+            const stabilitySummary = stability.getSummaryData();
+            const longRunSummary = longRun.getSummaryData();
+            const reportPath = generateReport({
+                status: runStatus,
+                startTime: executionStart,
+                endTime: new Date(),
+                metadata: executionMeta,
+                performance: perfSummary,
+                stability: stabilitySummary,
+                longRun: longRunSummary,
+            });
+            log("REPORT", `HTML report generated: ${reportPath}`);
+
+            const excelPath = await generateExcelReport({
+                cycleRows,
+                summary: {
+                    successRate: stabilitySummary.successRate,
+                    failureRate: stabilitySummary.failureRate,
+                    ordersPerMinute: perfSummary.ordersPerMinute,
+                    recoveries: stabilitySummary.recoveredFailures,
+                    reconnects: stabilitySummary.adbReconnects,
+                    longRun: {
+                        slowdownDetected: longRunSummary.slowdown?.detected,
+                        slowdownPercent: longRunSummary.slowdown?.slowdownPercent,
+                        memoryLeakDetected: longRunSummary.memoryLeak?.detected,
+                        recoverySpikesDetected: longRunSummary.recoverySpikes?.detected,
+                    },
+                },
+            });
+            log("REPORT", `Excel report generated: ${excelPath}`);
+        } catch (reportErr) {
+            log("REPORT_WARNING", `Failed to generate report output: ${reportErr.message}`);
+        }
+
+        if (dashboard) {
+            try {
+                await dashboard.close();
+                log("DASHBOARD", "Live dashboard stopped");
+            } catch (e) {
+                log("DASHBOARD_WARNING", `Dashboard stop warning: ${e.message}`);
+            }
+        }
+
         log("SETUP", "Session closed");
     }
 }

@@ -11,6 +11,9 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
+    "exceljs": "^4.4.0",
+    "express": "^5.2.1",
+    "socket.io": "^4.8.3",
     "webdriverio": "^9.27.2"
   }
 }

@@ -1,6 +1,7 @@
 const locators = require('../locators.json');
 const config = require('../config.json');
 const { log } = require('../utils/logger');
+const stability = require('../utils/stabilityMetrics');
 
 const defaultWait = (config.timeouts && config.timeouts.defaultWaitMs) || 15000;
 const scrollSettleDelay = config.connectionMode === 'usb' ? 500 : 1500;
@@ -389,10 +390,13 @@ class BasePage {
         log("POPUP", `👉 Intercepted popup/alert! Auto-dismissing with button: "${btnText}"`);
         await alertButtons[0].click();
         await driver.pause(3000); // Wait for popup transition to fade out
+        stability.increment('popupRecoveries');
+        return true;
       }
     } catch (e) {
       // Silent catch to prevent watchdog interference
     }
+    return false;
   }
 
   /**
@@ -456,6 +460,7 @@ class BasePage {
       const filename = `error_${contextName}_${Date.now()}.png`;
       const filepath = path.join(screenshotDir, filename);
       await driver.saveScreenshot(filepath);
+      stability.increment('screenshotsCaptured');
       log("SCREENSHOT", `Saved failure screenshot to: screenshots/${filename}`);
     } catch (e) {
       log("SCREENSHOT_ERROR", `Failed to save screenshot: ${e.message}`);
