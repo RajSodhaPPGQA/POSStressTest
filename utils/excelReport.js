@@ -3,15 +3,16 @@
 const fs = require('fs');
 const path = require('path');
 const ExcelJS = require('exceljs');
+const { getRunDir } = require('./runArtifacts');
 
 async function generateExcelReport(payload) {
   const { cycleRows = [], summary = {} } = payload || {};
-  const reportsDir = path.join(__dirname, '..', 'Analytics', 'reports');
-  if (!fs.existsSync(reportsDir)) {
-    fs.mkdirSync(reportsDir, { recursive: true });
+  const runDir = getRunDir();
+  if (!fs.existsSync(runDir)) {
+    fs.mkdirSync(runDir, { recursive: true });
   }
 
-  const outPath = path.join(reportsDir, 'report.xlsx');
+  const outPath = path.join(runDir, 'report.xlsx');
   const workbook = new ExcelJS.Workbook();
   workbook.creator = 'ParentPay POS Automation';
   workbook.created = new Date();

@@ -178,12 +178,13 @@ function getAppMemoryUsage(udid) {
  * Resets UiAutomator2 helper services on device to recover from instrumentation crashes.
  */
 function resetUiAutomator2Server(udid) {
+  // Only force-stop the UiAutomator2 server processes — do NOT use pm clear.
+  // pm clear wipes the installed APK data and forces Appium to reinstall the
+  // server on the next session, which can fail or time out and kill recovery.
   const commands = [
     `adb -s ${udid} shell am force-stop io.appium.uiautomator2.server`,
     `adb -s ${udid} shell am force-stop io.appium.uiautomator2.server.test`,
-    `adb -s ${udid} shell am force-stop io.appium.settings`,
-    `adb -s ${udid} shell pm clear io.appium.uiautomator2.server`,
-    `adb -s ${udid} shell pm clear io.appium.uiautomator2.server.test`
+    `adb -s ${udid} shell am force-stop io.appium.settings`
   ];
 
   for (const cmd of commands) {

@@ -2,6 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { getRunDir } = require('./runArtifacts');
 
 function pad(v) {
   return String(v).padStart(2, '0');
@@ -238,14 +239,14 @@ function buildHtml(payload) {
 }
 
 function generateReport(payload) {
-  const reportsDir = path.join(__dirname, '..', 'Analytics', 'reports');
-  if (!fs.existsSync(reportsDir)) {
-    fs.mkdirSync(reportsDir, { recursive: true });
+  const runDir = getRunDir();
+  if (!fs.existsSync(runDir)) {
+    fs.mkdirSync(runDir, { recursive: true });
   }
 
   const stamp = formatTimestamp(new Date());
   const fileName = `report_${stamp}.html`;
-  const fullPath = path.join(reportsDir, fileName);
+  const fullPath = path.join(runDir, fileName);
   const html = buildHtml(payload);
   fs.writeFileSync(fullPath, html, 'utf8');
   return fullPath;

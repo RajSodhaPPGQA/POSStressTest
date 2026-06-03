@@ -2,6 +2,7 @@ const locators = require('../locators.json');
 const config = require('../config.json');
 const { log } = require('../utils/logger');
 const stability = require('../utils/stabilityMetrics');
+const { getRunDir } = require('../utils/runArtifacts');
 
 const defaultWait = (config.timeouts && config.timeouts.defaultWaitMs) || 15000;
 const scrollSettleDelay = config.connectionMode === 'usb' ? 500 : 1500;
@@ -91,17 +92,12 @@ class BasePage {
         return 'State_C';
       }
 
-      // 5. State F: POS Menu (looks for SENIOR POS MENU button or custom menuOption)
-      if (await isVisible(`android=new UiSelector().text("${locators.menuOption}")`)) {
-        return 'State_F';
-      }
-
-      // 6. State B: Dashboard (looks for POS button)
+      // 5. State B: Dashboard (looks for POS button)
       if (await isVisible(`android=new UiSelector().text("${locators.posButton}")`)) {
         return 'State_B';
       }
 
-      // 7. State E: Hierarchy Selection.
+      // 6. State E: Hierarchy Selection.
       // Some builds vary header text, so keep flexible fallbacks.
       if (
         await isVisible(`android=new UiSelector().text("${locators.hierarchyHeader}")`) ||
@@ -112,13 +108,20 @@ class BasePage {
         return 'State_E';
       }
 
-      // 8. State A: School Selection (looks for SchoolDev or school select title)
+      // 7. State A: School Selection — checked BEFORE State_F to prevent prod menus
+      // named "Hospitality" (same as menuOption) from being mistaken for the POS menu screen.
       if (
         await isVisible(`android=new UiSelector().text("${locators.schoolDev}")`) ||
         await isVisible(`android=new UiSelector().textContains("School")`) ||
         await isVisible(`android=new UiSelector().textContains("school")`)
       ) {
         return 'State_A';
+      }
+
+      // 8. State F: POS Menu (looks for SENIOR POS MENU button or custom menuOption)
+      // Placed after State_A to avoid false-positive when school name matches menuOption text.
+      if (await isVisible(`android=new UiSelector().text("${locators.menuOption}")`)) {
+        return 'State_F';
       }
     } catch (e) {
       log("STATE_WARN", `Error during state detection: ${e.message}`);
@@ -453,15 +456,15 @@ class BasePage {
     try {
       const fs = require('fs');
       const path = require('path');
-      const screenshotDir = path.join(__dirname, '..', 'screenshots');
-      if (!fs.existsSync(screenshotDir)) {
-        fs.mkdirSync(screenshotDir, { recursive: true });
+        const runDir = getRunDir();
+        if (!fs.existsSync(runDir)) {
+          fs.mkdirSync(runDir, { recursive: true });
       }
-      const filename = `error_${contextName}_${Date.now()}.png`;
-      const filepath = path.join(screenshotDir, filename);
+        const filename = `screenshot_error_${contextName}_${Date.now()}.png`;
+        const filepath = path.join(runDir, filename);
       await driver.saveScreenshot(filepath);
       stability.increment('screenshotsCaptured');
-      log("SCREENSHOT", `Saved failure screenshot to: screenshots/${filename}`);
+        log("SCREENSHOT", `Saved failure screenshot to: ${filepath}`);
     } catch (e) {
       log("SCREENSHOT_ERROR", `Failed to save screenshot: ${e.message}`);
     }

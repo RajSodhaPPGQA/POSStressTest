@@ -5,6 +5,7 @@ const express = require('express');
 const { Server } = require('socket.io');
 const fs = require('fs');
 const path = require('path');
+const { getRunDir } = require('./runArtifacts');
 
 function nowIso() {
   return new Date().toISOString();
@@ -156,11 +157,11 @@ function dashboardHtml() {
 
 async function startLiveDashboard(options = {}) {
   const port = options.port || 5050;
-  const analyticsDir = path.join(__dirname, '..', 'Analytics', 'dashboard');
-  if (!fs.existsSync(analyticsDir)) {
-    fs.mkdirSync(analyticsDir, { recursive: true });
+  const runDir = getRunDir();
+  if (!fs.existsSync(runDir)) {
+    fs.mkdirSync(runDir, { recursive: true });
   }
-  const stateFile = path.join(analyticsDir, 'live_state.json');
+  const stateFile = path.join(runDir, 'live_state.json');
 
   const app = express();
   const server = http.createServer(app);

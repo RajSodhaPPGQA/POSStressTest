@@ -35,7 +35,8 @@ async function checkAppiumHealth() {
 }
 
 // Utilities
-const { log } = require('./utils/logger');
+const { log, initLogger } = require('./utils/logger');
+const { initRunArtifacts } = require('./utils/runArtifacts');
 const { reconnectAdb, ensureAdbConnected, checkNetworkStatus, getAppMemoryUsage, resetUiAutomator2Server } = require('./utils/adb');
 const { generateCart } = require('./utils/cartGenerator');
 const perf = require('./utils/perfMetrics');
@@ -390,6 +391,10 @@ async function setupAndEnterPOS(driver, unknownRecoveryAttempt = 0) {
 // Supports: cartProducts (explicit), products (random qty/random cart), productName (legacy)
 
 async function main() {
+    const runDir = initRunArtifacts();
+    initLogger(runDir);
+    log("SETUP", `Run output directory: ${runDir}`);
+
     stability.startRun();
     const executionStart = new Date();
     let runStatus = 'SUCCESS';
@@ -849,6 +854,10 @@ async function main() {
                                 stability.increment('appRestarts');
                             } catch (adbError) { log("ADB_WARNING", `launch warning: ${adbError.message}`); }
 
+                            // Wait for the device to fully stabilise before creating the new session.
+                            // Without this delay, Appium can fail to connect immediately after a UiAutomator2 crash.
+                            log("SETUP", "Waiting 8s for device to stabilise before relaunching session...");
+                            await sleep(8000);
                             log("SETUP", "Relaunching Appium session...");
                             driver = await createDriverSession(targetUdid, 'cycle-crash-recovery');
                             addDashboardEvent('SESSION', 'Session recreated');
