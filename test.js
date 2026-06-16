@@ -1,6 +1,6 @@
 const { remote } = require('webdriverio');
 const config = require('./config.json');
-const { execSync } = require('child_process');
+const { execSync, exec } = require('child_process');
 const readline = require('readline');
 const http = require('http');
 async function checkAppiumHealth() {
@@ -61,6 +61,34 @@ if (config.hierarchyRight) locators.hierarchyRight = config.hierarchyRight;
 if (config.menuOption) locators.menuOption = config.menuOption;
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+function formatDuration(ms) {
+    const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+    const h = Math.floor(totalSeconds / 3600);
+    const m = Math.floor((totalSeconds % 3600) / 60);
+    const s = totalSeconds % 60;
+    if (h > 0) return `${h}h ${m}m ${s}s`;
+    return `${m}m ${s}s`;
+}
+
+function openDashboardInBrowser(url) {
+    try {
+        if (process.platform === 'win32') {
+            exec(`start "" "${url}"`);
+        } else if (process.platform === 'darwin') {
+            exec(`open "${url}"`);
+        } else {
+            exec(`xdg-open "${url}"`);
+        }
+    } catch (_e) {
+        // Best-effort only; dashboard remains reachable by URL even if auto-open fails.
+    }
+}
+
+function isUnattendedMode() {
+    // Explicit opt-in keeps default local interactive behavior unchanged.
+    return config.unattended === true || process.env.CI === 'true';
+}
 
 function buildRemoteOptions(targetUdid) {
     return {
@@ -189,6 +217,11 @@ async function getDeviceUdid() {
 
     if (devices.length === 0) {
         throw new Error("No Android device detected via ADB. Please connect a device (USB or wireless) and try again.");
+    }
+
+    // Multiple devices: prompt user (unless unattended mode is enabled)
+    if (isUnattendedMode()) {
+        throw new Error('Multiple ADB devices detected in unattended mode. Set a single valid udid in config.json.');
     }
 
     // Multiple devices: prompt user
@@ -418,6 +451,10 @@ async function main() {
             const dashPort = config.liveDashboardPort || 5050;
             dashboard = await startLiveDashboard({ port: dashPort });
             log("DASHBOARD", `Live dashboard started: ${dashboard.url}`);
+            if (config.liveDashboardAutoOpen !== false) {
+                openDashboardInBrowser(dashboard.url);
+                log("DASHBOARD", `Auto-open requested for dashboard URL: ${dashboard.url}`);
+            }
         }
     } catch (e) {
         log("DASHBOARD_WARNING", `Live dashboard disabled due to startup issue: ${e.message}`);
@@ -431,14 +468,31 @@ async function main() {
     const updateDashboardMetrics = (currentCycle) => {
         if (!dashboard) return;
         const s = stability.getSummaryData();
-        const elapsedMin = (Date.now() - executionStart.getTime()) / 60000;
-        const opm = elapsedMin > 0 ? (s.cyclesCompleted / elapsedMin).toFixed(1) : '0.0';
+        const perfSummary = perf.getSummaryData();
+        const elapsedMs = Date.now() - executionStart.getTime();
+        const elapsedMin = elapsedMs / 60000;
+        const startupInclusiveOpm = elapsedMin > 0 ? (s.cyclesCompleted / elapsedMin).toFixed(1) : '0.0';
+        const opm = perfSummary.ordersPerMinute && perfSummary.ordersPerMinute !== 'N/A'
+            ? perfSummary.ordersPerMinute
+            : startupInclusiveOpm;
+        const runMode = config.mode || 'duration';
+        const targetDurationMs = (config.durationMins || 5) * 60 * 1000;
+        const elapsedText = formatDuration(elapsedMs);
+        const totalText = runMode === 'duration'
+            ? formatDuration(targetDurationMs)
+            : `${config.maxCycles || 10} cycles`;
+        const remainingText = runMode === 'duration'
+            ? formatDuration(Math.max(0, targetDurationMs - elapsedMs))
+            : 'N/A';
         dashboard.updateMetrics({
             currentCycle,
             ordersPerMinute: opm,
             successRate: s.successRate,
             recoveries: s.recoveredFailures,
             reconnects: s.adbReconnects,
+            elapsedText,
+            totalText,
+            remainingText,
             runStatus,
         });
     };
@@ -515,8 +569,25 @@ async function main() {
     } catch (e) {}
 
     // Ensure connection state is stable before starting Appium session
-    ensureAdbConnected(targetUdid);
-    checkNetworkStatus(targetUdid);
+    const adbConnectedAtStart = ensureAdbConnected(targetUdid);
+    if (!adbConnectedAtStart) {
+        throw new Error(`ADB device "${targetUdid}" is not connected or offline before session start.`);
+    }
+    const networkOnlineAtStart = checkNetworkStatus(targetUdid);
+    if (!networkOnlineAtStart) {
+        log("NETWORK_WARNING", "Device network check failed before session start. Continuing with recovery-capable flow.");
+    }
+    log("HEALTH", JSON.stringify({
+        stage: 'pre-session',
+        unattended: isUnattendedMode(),
+        runMode: config.mode || 'duration',
+        durationMins: config.durationMins || 5,
+        maxCycles: config.maxCycles || 10,
+        framework: config.framework || 'maui',
+        udid: targetUdid,
+        adbConnected: adbConnectedAtStart,
+        networkOnline: networkOnlineAtStart,
+    }));
 
     // Force stop and launch freshly via ADB before creating first Appium session
     try {
@@ -551,8 +622,12 @@ async function main() {
         while (!setupSuccess && setupRetries < 5) {
             try {
                 // Ensure ADB and network are up before attempting setup
-                ensureAdbConnected(targetUdid);
-                checkNetworkStatus(targetUdid);
+                if (!ensureAdbConnected(targetUdid)) {
+                    throw new Error(`ADB device "${targetUdid}" is not connected during setup.`);
+                }
+                if (!checkNetworkStatus(targetUdid)) {
+                    log("NETWORK_WARNING", "Network check failed during setup. Continuing setup attempt.");
+                }
                 
                 await setupAndEnterPOS(driver);
                 setupSuccess = true;
@@ -625,6 +700,8 @@ async function main() {
         const runMode = config.mode || "duration";
         const durationMs = (config.durationMins || 5) * 60 * 1000;
         const maxCycles = config.maxCycles || 10;
+        const networkAndMemoryCheckEveryNCycles = Math.max(1, Number(config.networkAndMemoryCheckEveryNCycles || 10));
+        const driverHealthCheckEveryNCycles = Math.max(1, Number(config.driverHealthCheckEveryNCycles || 1));
 
         const parseConfigList = (value) => {
             if (!value) return [];
@@ -646,6 +723,7 @@ async function main() {
         while (shouldContinue()) {
             const elapsedMins = ((Date.now() - startTime) / 60000).toFixed(1);
             const cycleAttemptStart = Date.now();
+            let watchdogTimerId = null;
             updateDashboardMetrics(cycle);
             if (runMode === "cycles") {
                 log("CYCLE", `Starting Cycle #${cycle} of ${maxCycles}`);
@@ -655,10 +733,12 @@ async function main() {
 
             try {
                 // 1. ADB connectivity check (fast - just adb devices)
-                ensureAdbConnected(targetUdid);
+                if (!ensureAdbConnected(targetUdid)) {
+                    throw new Error(`ADB device "${targetUdid}" disconnected during cycle.`);
+                }
 
-                // 2. Network + Memory checks only every 10 cycles (avoid blocking ping per cycle)
-                if (cycle % 10 === 1) {
+                // 2. Network + Memory checks at configured cadence (avoid blocking ping per cycle)
+                if ((cycle - 1) % networkAndMemoryCheckEveryNCycles === 0) {
                     checkNetworkStatus(targetUdid);
                     const memUsage = getAppMemoryUsage(targetUdid);
                     if (memUsage) {
@@ -690,16 +770,17 @@ async function main() {
                     await BasePage.checkForAlertsAndDismiss(driver);
                 } catch (e) {}
 
-                // PRE-CYCLE HEALTH CHECK
-                try {
-                    await driver.getWindowSize();
-                } catch (healthErr) {
-                    throw new Error(`Health Check failed: Appium session is unresponsive (${healthErr.message})`);
+                // PRE-CYCLE HEALTH CHECK (configurable cadence)
+                if ((cycle - 1) % driverHealthCheckEveryNCycles === 0) {
+                    try {
+                        await driver.getWindowSize();
+                    } catch (healthErr) {
+                        throw new Error(`Health Check failed: Appium session is unresponsive (${healthErr.message})`);
+                    }
                 }
 
                 // 4. TRANSACTION WATCHDOG RACE
                 const maxTime = config.maxCycleTimeMs || 60000;
-                let watchdogTimerId;
 
                 const watchdogPromise = new Promise((_, reject) => {
                     watchdogTimerId = setTimeout(() => {
@@ -761,6 +842,9 @@ async function main() {
                 updateDashboardMetrics(cycle);
 
             } catch (cycleError) {
+                if (watchdogTimerId) {
+                    clearTimeout(watchdogTimerId);
+                }
                 perf.cancelCycle(); // discard incomplete cycle from metrics
                 stability.recordCycleFailure(stability.classifyFailureReason(cycleError.message));
                 // Clear any watchdog timers

@@ -95,6 +95,9 @@ function dashboardHtml() {
     <div class="grid">
       <div class="card"><div class="label">Current Cycle</div><div class="value" id="currentCycle">0</div></div>
       <div class="card"><div class="label">Orders / Minute</div><div class="value" id="opm">0.0</div></div>
+      <div class="card"><div class="label">Elapsed</div><div class="value" id="elapsedText">0m 0s</div></div>
+      <div class="card"><div class="label">Total Run</div><div class="value" id="totalText">0m 0s</div></div>
+      <div class="card"><div class="label">Remaining</div><div class="value" id="remainingText">0m 0s</div></div>
       <div class="card"><div class="label">Success Rate</div><div class="value good" id="successRate">0.0%</div></div>
       <div class="card"><div class="label">Recoveries</div><div class="value warn" id="recoveries">0</div></div>
       <div class="card"><div class="label">Reconnects</div><div class="value warn" id="reconnects">0</div></div>
@@ -117,6 +120,9 @@ function dashboardHtml() {
     function renderMetrics(m) {
       setText('currentCycle', m.currentCycle ?? 0);
       setText('opm', m.ordersPerMinute ?? '0.0');
+      setText('elapsedText', m.elapsedText ?? '0m 0s');
+      setText('totalText', m.totalText ?? '0m 0s');
+      setText('remainingText', m.remainingText ?? '0m 0s');
       setText('successRate', m.successRate ?? '0.0%');
       setText('recoveries', m.recoveries ?? 0);
       setText('reconnects', m.reconnects ?? 0);
@@ -171,6 +177,9 @@ async function startLiveDashboard(options = {}) {
     metrics: {
       currentCycle: 0,
       ordersPerMinute: '0.0',
+      elapsedText: '0m 0s',
+      totalText: '0m 0s',
+      remainingText: '0m 0s',
       successRate: '0.0%',
       recoveries: 0,
       reconnects: 0,

@@ -33,3 +33,7 @@ pnpm-lock.yaml
 
 # Screenshots
 screenshots/
+
+# Runtime-generated temporary files
+config.runtime.json
+test.runtime.js

@@ -28,6 +28,14 @@ Ensure all below are true:
 3. `config.json` has the correct target values
 4. ParentPay POS app is installed on target device
 
+### Why `config.json` and `config.runtime.json` Both Exist
+
+- `config.json` is the primary file you edit and keep in source control.
+- `config.runtime.json` is a temporary override file for one-off runs (for example changing UDID, duration, or mode without editing the base file).
+- Some run commands generate `test.runtime.js` that points to `config.runtime.json`.
+- Direct `node test.js` still uses `config.json`.
+- Runtime files are disposable and are excluded by `.gitignore`.
+
 ## 3. How to Run
 
 In terminal, from project root:
@@ -196,7 +204,12 @@ Live dashboard (real-time):
 - Default URL: `http://127.0.0.1:5050`
 - Config keys:
   - `liveDashboardEnabled`
+  - `liveDashboardAutoOpen`
   - `liveDashboardPort`
+- Dashboard shows run timing cards:
+  - elapsed
+  - total run target
+  - remaining
 
 ## 7. Failure Screenshots
 
