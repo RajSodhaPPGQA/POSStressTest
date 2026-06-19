@@ -40,3 +40,7 @@ test.runtime.js
 
 # Local interview prep document
 InterviewQnA.md
+
+# Layout dumps and temporary XMLs
+source.xml
+*.xml

@@ -46,42 +46,90 @@ function toNumberPercent(value) {
 }
 
 function classifyRunHealth({ status, stability, longRun, startupHealth }) {
-  const reasons = [];
+  const { assessMemoryHealth } = require('./longRunAnalytics');
+  const memHealth = assessMemoryHealth(longRun?.memoryLeak || {}, longRun?.slowdown || {}, stability);
+
   const successRate = toNumberPercent(stability?.successRate);
   const fatalFailures = Number(stability?.fatalFailures || 0);
   const appiumReady = startupHealth?.appiumReady;
   const adbConnected = startupHealth?.adbConnected;
   const slowdownDetected = Boolean(longRun?.slowdown?.detected);
-  const memoryLeakDetected = Boolean(longRun?.memoryLeak?.detected);
 
-  if (status !== 'SUCCESS') reasons.push('Run did not complete successfully');
-  if (fatalFailures > 0) reasons.push(`Fatal failures observed (${fatalFailures})`);
-  if (successRate < 98) reasons.push(`Success rate below target (${successRate.toFixed(1)}%)`);
-  if (appiumReady === false) reasons.push('Startup health gate: Appium not ready');
-  if (adbConnected === false) reasons.push('Startup health gate: ADB not connected');
-  if (memoryLeakDetected) reasons.push('Memory leak indicator detected');
+  const hasSystemFailures = status !== 'SUCCESS' || fatalFailures > 0 || successRate < 98 || appiumReady === false || adbConnected === false;
 
-  if (reasons.length > 0) {
+  if (hasSystemFailures || memHealth.status === 'High Risk of Memory Leak') {
+    const reasons = [];
+    if (status !== 'SUCCESS') reasons.push('Run did not complete successfully.');
+    if (fatalFailures > 0) reasons.push(`Fatal failures observed (${fatalFailures}).`);
+    if (successRate < 98) reasons.push(`Success rate below target (${successRate.toFixed(1)}%).`);
+    if (appiumReady === false) reasons.push('Startup health gate: Appium not ready.');
+    if (adbConnected === false) reasons.push('Startup health gate: ADB not connected.');
+    
+    if (memHealth.status === 'High Risk of Memory Leak') {
+      reasons.push('Significant memory growth combined with performance degradation and instability detected.');
+      reasons.push('Detailed heap dump analysis is strongly recommended.');
+    } else if (memHealth.status !== 'Healthy') {
+      reasons.push(memHealth.verdictText);
+    }
     return { verdict: 'At Risk', cls: 'fail', reasons };
+  }
+
+  if (memHealth.status === 'Potential Memory Retention') {
+    return {
+      verdict: 'Monitor',
+      cls: 'recovery',
+      reasons: [
+        'Memory growth exceeded expected thresholds.',
+        'Performance degradation or recovery activity detected.',
+        'Heap analysis is recommended.'
+      ]
+    };
+  }
+
+  if (memHealth.status === 'Memory Growth Observed') {
+    const slope = longRun?.memoryLeak?.slopeMbPerCycle || 0;
+    return {
+      verdict: 'Monitor',
+      cls: 'recovery',
+      reasons: [
+        'Sustained memory growth observed across sampled cycles.',
+        `Average growth rate: ${slope.toFixed(3)} MB/cycle.`,
+        'No significant cycle-duration drift detected.',
+        'No failures or recoveries occurred.',
+        'Additional endurance testing is recommended.'
+      ]
+    };
   }
 
   if (slowdownDetected) {
     return {
       verdict: 'Monitor',
       cls: 'recovery',
-      reasons: ['Cycle slowdown trend detected (stability still acceptable)'],
+      reasons: [
+        'Cycle slowdown trend detected (stability still acceptable).',
+        'No significant memory anomalies detected.'
+      ]
     };
   }
 
-  return { verdict: 'Healthy', cls: 'pass', reasons: ['All primary health checks look stable'] };
+  return {
+    verdict: 'Healthy',
+    cls: 'pass',
+    reasons: [
+      'Memory usage remained stable during the run.',
+      'No significant performance degradation detected.'
+    ]
+  };
 }
 
 function buildRecommendations({ performance, longRun, stability }) {
+  const { assessMemoryHealth } = require('./longRunAnalytics');
+  const memHealth = assessMemoryHealth(longRun?.memoryLeak || {}, longRun?.slowdown || {}, stability);
+
   const tips = [];
   const bottlenecks = performance?.bottlenecks || [];
   const topBottleneck = bottlenecks[0]?.label;
   const slowdownDetected = Boolean(longRun?.slowdown?.detected);
-  const memoryLeakDetected = Boolean(longRun?.memoryLeak?.detected);
   const recoveryCount = Number(longRun?.recoverySpikes?.totalRecoveries || 0);
   const reconnects = Number(stability?.adbReconnects || 0);
 
@@ -91,11 +139,17 @@ function buildRecommendations({ performance, longRun, stability }) {
   if (slowdownDetected) {
     tips.push('Slowdown trend detected: compare first-window vs last-window cycle timings and inspect backend response drift.');
   }
-  if (memoryLeakDetected) {
-    tips.push('Memory-growth signal detected: consider lowering proactive relaunch interval or tightening memory recycle thresholds.');
+  
+  if (memHealth.status === 'High Risk of Memory Leak') {
+    tips.push('Detailed heap dump analysis is strongly recommended due to high risk of memory leak.');
+  } else if (memHealth.status === 'Potential Memory Retention') {
+    tips.push('Potential memory retention: perform heap analysis and review app cache/navigation patterns.');
+  } else if (memHealth.status === 'Memory Growth Observed') {
+    tips.push('Memory growth observed: consider extending duration of smoke runs or adjusting memory limits.');
   }
+
   if (reconnects > 0 || recoveryCount > 0) {
-    tips.push('Recoveries occurred: verify device/network stability and review corresponding run.log segments for repeating patterns.');
+    tips.push('Recoveries occurred: verify device/network stability and review corresponding run.log segments.');
   }
   if (tips.length === 0) {
     tips.push('No immediate action needed; continue periodic long-run smokes to confirm trend stability.');
@@ -160,6 +214,8 @@ function buildHtml(payload) {
   const recoverySpikes = longRunData.recoverySpikes || {};
   const startup = startupHealth || {};
   const boolText = (v) => (v === true ? 'Yes' : (v === false ? 'No' : 'Unknown'));
+  const { assessMemoryHealth } = require('./longRunAnalytics');
+  const memHealth = assessMemoryHealth(memoryLeak, slowdown, stability);
   const runHealth = classifyRunHealth({ status, stability, longRun: longRunData, startupHealth: startup });
   const recommendations = buildRecommendations({ performance, longRun: longRunData, stability });
   const successRateNum = toNumberPercent(stability.successRate || '0%');
@@ -435,6 +491,18 @@ function buildHtml(payload) {
       </section>
 
       <section class="card">
+        <h2>Memory Health Summary</h2>
+        <table>
+          ${row('Memory Health Status', memHealth.status, memHealth.statusClass)}
+          ${row('Memory Trend', memHealth.trend)}
+          ${row('Memory Net Increase', `${memoryLeak.netIncreaseMb || 0} MB`)}
+          ${row('Memory Slope', `${memoryLeak.slopeMbPerCycle || 0} MB/cycle`)}
+          ${row('Leak Risk', memHealth.risk, memHealth.riskClass)}
+          ${row('Recommendation', memHealth.recommendation)}
+        </table>
+      </section>
+
+      <section class="card">
         <h2>Long Run Analytics</h2>
         <table>
           ${row('Cycles Tracked', longRunData.totalCyclesTracked || 0)}
@@ -443,9 +511,9 @@ function buildHtml(payload) {
           ${row('Trend Window Size', slowdown.windowSize || 'N/A')}
           ${row('Slowdown Percent', `${slowdown.slowdownPercent || 0}%`, slowdown.detected ? 'fail' : 'pass')}
           ${row('Slowdown Note', slowdown.reason || 'N/A')}
-          ${row('Memory Leak Indicator', memoryLeak.detected ? 'Detected' : 'Not Detected', memoryLeak.detected ? 'fail' : 'pass')}
-          ${row('Memory Net Increase', `${memoryLeak.netIncreaseMb || 0} MB`, memoryLeak.detected ? 'fail' : '')}
-          ${row('Memory Slope', `${memoryLeak.slopeMbPerCycle || 0} MB/cycle`, memoryLeak.detected ? 'fail' : 'pass')}
+          ${row('Memory Health Status', memHealth.status, memHealth.statusClass)}
+          ${row('Memory Net Increase', `${memoryLeak.netIncreaseMb || 0} MB`)}
+          ${row('Memory Slope', `${memoryLeak.slopeMbPerCycle || 0} MB/cycle`)}
           ${row('Memory Note', memoryLeak.reason || 'N/A')}
           ${row('Recovery Spikes', recoverySpikes.detected ? 'Detected' : 'Not Detected', recoverySpikes.detected ? 'recovery' : 'pass')}
           ${row('Recovery Count', recoverySpikes.totalRecoveries || 0, (recoverySpikes.totalRecoveries || 0) > 0 ? 'recovery' : '')}

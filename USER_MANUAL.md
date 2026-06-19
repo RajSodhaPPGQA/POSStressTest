@@ -1,5 +1,7 @@
 # POS Stress Test - User Manual
 
+For details on core framework modules and performance optimization flows, see [Architecture & Optimization Guide](file:///d:/POSStressTest/ARCHITECTURE.md).
+
 ## 1. What This Tool Does
 This automation repeatedly performs POS transactions in the ParentPay POS Android app.
 
@@ -74,6 +76,18 @@ Config:
 
 - `mode`: `"cycles"`
 - `maxCycles`: number of transaction loops
+
+---
+
+### Execution Modes
+
+#### Standard Mode
+* Config: `"executionMode": "standard"`
+* Performs standard child lookup, full element probes, and inserts transition delays between taps to mirror human interaction.
+
+#### Rapid Mode
+* Config: `"executionMode": "rapid"`
+* Optimizes throughput by utilizing child context reuse (skips lookup overlays if consecutive cycles target the same child), product button caching (skips redundant locator requests), and Appium active idle settings to prevent animation locks. Gives OPMs > 9.5+.
 
 ## 5. Editing Test Data
 
@@ -211,6 +225,9 @@ Live dashboard (real-time):
   - total run target
   - remaining
 
+> [!NOTE]
+> **Active Loop Timing**: All elapsed timers, Rolling OPM, and Stability Duration metrics exclude the startup/login overhead (which takes ~40 seconds). Timing calculation starts precisely when the app lands on the main POS page and starts the first order, representing the true capacity of the POS terminal.
+
 ## 7. Failure Screenshots
 
 On major failures, screenshots are automatically saved in `screenshots/`.
@@ -278,3 +295,30 @@ Actions:
 
 At completion, script prints success/stability summaries, closes Appium session automatically,
 and writes updated analytics reports under `Analytics/reports/`.
+
+---
+
+## 12. Memory Health Risk Analysis
+
+To avoid false-positive leak warnings caused by standard framework/caching growth, the framework analyzes memory slope trends (linear regression over dumpsys logs) alongside stability/slowdown indicators using a 4-tier risk classification model:
+
+1. **Healthy**:
+   - Memory slope remains below `0.25 MB/cycle`.
+   - No cycle duration slowdown or stability failures occur.
+   - *Verdict*: Memory usage is stable.
+
+2. **Memory Growth Observed**:
+   - Memory slope is between `0.25 and 0.75 MB/cycle`.
+   - No significant performance slowdown (<= 10% drift) and zero failures/recoveries.
+   - *Verdict*: Natural framework/image caching. No action needed; standard endurance growth.
+
+3. **Potential Memory Retention**:
+   - Memory slope exceeds `0.75 MB/cycle`.
+   - Accompanied by cycle duration slowdown (> 10%), recovery loops, or restarts.
+   - *Verdict*: Potential resource retention; review app cache and navigation patterns.
+
+4. **High Risk of Memory Leak**:
+   - Memory slope exceeds `1.5 MB/cycle`.
+   - Combined with significant slowdown (> 20%), app crashes, repeated recoveries, or fatal failures.
+   - *Verdict*: Instability detected; detailed heap dump dump analysis is strongly recommended.
+

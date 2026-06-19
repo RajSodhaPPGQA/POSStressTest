@@ -91,6 +91,11 @@ function startCycle() {
   _current = {};
 }
 
+/** Reset the run start time to now. */
+function startRun() {
+  _runStart = Date.now();
+}
+
 /**
  * Record a completed phase duration (ms).
  * Also handles out-of-cycle phases: RECOVERY and RELAUNCH are stored directly
@@ -539,4 +544,4 @@ function _printRecommendations(avgChild, avgCart, avgWallet, avgPayment, avgCycl
   }
 }
 
-module.exports = { PHASES, startCycle, record, endCycle, cancelCycle, printSummary, getSummaryData, logRollingOPM, recordFastpath, recordLocateBreakdown };
+module.exports = { PHASES, startCycle, startRun, record, endCycle, cancelCycle, printSummary, getSummaryData, logRollingOPM, recordFastpath, recordLocateBreakdown };

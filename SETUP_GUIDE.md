@@ -1,5 +1,7 @@
 # POS Stress Test - Setup Guide
 
+For details on core framework modules and performance optimization flows, see [Architecture & Optimization Guide](file:///d:/POSStressTest/ARCHITECTURE.md).
+
 ## 1. Project Purpose
 This project runs automated stress transactions for the ParentPay POS Android app using WebdriverIO + Appium.
 
@@ -65,6 +67,7 @@ Edit `config.json` before execution.
 - `mode`: `"duration"` or `"cycles"`
 - `durationMins`: run length in minutes when `mode=duration`
 - `maxCycles`: max iterations when `mode=cycles`
+- `executionMode`: `"rapid"` or `"standard"`. Rapid mode activates child selection fast-path, product button caching, tighter scroll settle delays, and Appium idle settings to bypass Native transition locks.
 
 ### Device Settings
 
@@ -134,6 +137,7 @@ Priority: `cartProducts` → `products` → `productName`
 - `maxMemoryLimitMb`: restart app/session if memory exceeds limit
 - `networkAndMemoryCheckEveryNCycles`: cadence for network/memory checks during cycles
 - `driverHealthCheckEveryNCycles`: cadence for Appium `getWindowSize` health checks during cycles
+- `memoryHealthThresholds`: (Object) Configures risk evaluation boundaries for the linear regression memory health engine (e.g. `healthySlopeMax`, `growthSlopeMax`, `retentionSlopeMin`, `highRiskSlopeMin`, `slowdownWarningPct`, `slowdownHighRiskPct`).
 
 ### Optional Dynamic Locators
 

@@ -1,6 +1,7 @@
 'use strict';
 
 const { log } = require('./logger');
+const config = require('../config.json');
 
 function avg(values) {
   if (!values || values.length === 0) return 0;
@@ -25,6 +26,79 @@ function linearSlope(points) {
   const denom = (n * sumXX) - (sumX * sumX);
   if (denom === 0) return 0;
   return ((n * sumXY) - (sumX * sumY)) / denom;
+}
+
+function assessMemoryHealth(memoryLeak, slowdown, stability, configOverride) {
+  const cfg = configOverride || config;
+  const t = (cfg && cfg.memoryHealthThresholds) || {
+    healthySlopeMax: 0.25,
+    growthSlopeMax: 0.75,
+    retentionSlopeMin: 0.75,
+    highRiskSlopeMin: 1.5,
+    slowdownWarningPct: 10,
+    slowdownHighRiskPct: 20
+  };
+
+  const slope = memoryLeak.slopeMbPerCycle || 0;
+  const netIncrease = memoryLeak.netIncreaseMb || 0;
+  const slowdownPct = slowdown.slowdownPercent || 0;
+  const slowdownDetected = slowdown.detected || false;
+
+  const failures = stability ? ((stability.cyclesFailed || 0) + (stability.fatalFailures || 0)) : 0;
+  const recoveries = stability ? (stability.recoveredFailures || 0) : 0;
+  const restarts = stability ? (stability.appRestarts || 0) : 0;
+
+  // 1. High Risk of Memory Leak
+  if (slope > t.highRiskSlopeMin && 
+      (slowdownPct > t.slowdownHighRiskPct || restarts > 0 || recoveries > 0 || failures > 0)) {
+    return {
+      status: 'High Risk of Memory Leak',
+      statusClass: 'fail',
+      risk: 'High',
+      riskClass: 'fail',
+      trend: slope > 0 ? 'Increasing' : 'Stable',
+      recommendation: 'Detailed heap dump analysis is strongly recommended.',
+      verdictText: 'Significant memory growth combined with performance degradation and instability detected. Detailed heap dump analysis is strongly recommended.'
+    };
+  }
+
+  // 2. Potential Memory Retention
+  if (slope > t.retentionSlopeMin && 
+      (slowdownDetected || slowdownPct > t.slowdownWarningPct || recoveries > 0 || restarts > 0)) {
+    return {
+      status: 'Potential Memory Retention',
+      statusClass: 'recovery',
+      risk: 'Medium',
+      riskClass: 'recovery',
+      trend: slope > 0 ? 'Increasing' : 'Stable',
+      recommendation: 'Heap analysis is recommended.',
+      verdictText: 'Memory growth exceeded expected thresholds. Performance degradation or recovery activity detected. Heap analysis is recommended.'
+    };
+  }
+
+  // 3. Memory Growth Observed
+  if (slope >= t.healthySlopeMax) {
+    return {
+      status: 'Memory Growth Observed',
+      statusClass: 'recovery',
+      risk: 'Low',
+      riskClass: 'pass',
+      trend: slope > 0 ? 'Increasing' : 'Stable',
+      recommendation: 'Additional endurance testing is recommended.',
+      verdictText: `Sustained memory growth observed across sampled cycles. Average growth rate: ${slope.toFixed(3)} MB/cycle. No significant cycle-duration drift detected. No failures or recoveries occurred. Additional endurance testing is recommended.`
+    };
+  }
+
+  // 4. Healthy
+  return {
+    status: 'Healthy',
+    statusClass: 'pass',
+    risk: 'Low',
+    riskClass: 'pass',
+    trend: slope > 0 ? 'Increasing' : 'Stable',
+    recommendation: 'No immediate action needed; continue periodic long-run smokes to confirm trend stability.',
+    verdictText: 'Memory usage remained stable during the run. No significant performance degradation detected.'
+  };
 }
 
 function createLongRunAnalytics() {
@@ -144,10 +218,14 @@ function createLongRunAnalytics() {
     };
   }
 
-  function getSummaryData() {
+  function getSummaryData(stabilitySummary = null) {
+    const memoryLeak = detectMemoryLeakIndicators();
+    const slowdown = detectSlowdown();
+    const memHealth = assessMemoryHealth(memoryLeak, slowdown, stabilitySummary);
     return {
-      slowdown: detectSlowdown(),
-      memoryLeak: detectMemoryLeakIndicators(),
+      slowdown,
+      memoryLeak,
+      memoryHealth: memHealth,
       recoverySpikes: detectRecoverySpikes(),
       totalCyclesTracked: state.cycleDurations.length,
       memorySamplesTracked: state.memorySamples.length,
@@ -155,8 +233,8 @@ function createLongRunAnalytics() {
     };
   }
 
-  function printSummary() {
-    const summary = getSummaryData();
+  function printSummary(stabilitySummary = null) {
+    const summary = getSummaryData(stabilitySummary);
     log('LONGRUN', '============================================================');
     log('LONGRUN', '=== LONG RUN ANALYTICS ===');
     log('LONGRUN', `Cycles Tracked: ${summary.totalCyclesTracked}`);
@@ -174,9 +252,13 @@ function createLongRunAnalytics() {
     log('LONGRUN', '');
 
     const mem = summary.memoryLeak;
+    const memHealth = summary.memoryHealth;
+    log('LONGRUN', `Memory Health Status: ${memHealth.status}`);
     log('LONGRUN', `Memory Leak Indicator: ${mem.detected ? 'YES' : 'NO'}`);
     log('LONGRUN', `Memory Net Increase: ${mem.netIncreaseMb || 0} MB`);
     log('LONGRUN', `Memory Slope: ${mem.slopeMbPerCycle || 0} MB/cycle`);
+    log('LONGRUN', `Leak Risk: ${memHealth.risk}`);
+    log('LONGRUN', `Recommendation: ${memHealth.recommendation}`);
     log('LONGRUN', `Memory Note: ${mem.reason}`);
     log('LONGRUN', '');
 
@@ -201,4 +283,4 @@ function createLongRunAnalytics() {
   };
 }
 
-module.exports = { createLongRunAnalytics };
+module.exports = { createLongRunAnalytics, assessMemoryHealth };

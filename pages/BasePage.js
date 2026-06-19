@@ -132,6 +132,10 @@ class BasePage {
   static async findElementFast(driver, text, areaKey = 'global') {
     const exactSelector = `android=new UiSelector().text("${text}")`;
     const _t0 = Date.now();
+    const executionMode = process.env.EXECUTION_MODE || config.executionMode || 'standard';
+    const isRapid = executionMode === 'rapid';
+    const maxRetries = isRapid ? 2 : 25;
+    const settleDelay = isRapid ? 200 : scrollSettleDelay;
 
     // ── INITIAL LOOKUP ──────────────────────────────────────────────────────
     // Single non-blocking probe — return immediately if element is already visible.
@@ -150,7 +154,7 @@ class BasePage {
     log("FASTPATH", `Retry loop entered`);
     let _retryCount = 0;
     const _retryStart = Date.now();
-    for (let i = 1; i < 25; i++) {
+    for (let i = 1; i < maxRetries; i++) {
       await driver.pause(40);
       _retryCount++;
       log("FASTPATH", `Retry #${_retryCount}`);
@@ -177,7 +181,7 @@ class BasePage {
       log("SCROLL_WARNING", `Scrollable list not found: ${scrollErr.message}. Checking direct visibility again...`);
     }
 
-    await driver.pause(scrollSettleDelay); // let scroll settle
+    await driver.pause(settleDelay); // let scroll settle
     log("FASTPATH", `Scroll completed | scroll=${Date.now() - _scrollStart}ms`);
     
     // RE-FIND the element after scrolling to refresh its coordinates and elementId!
@@ -201,7 +205,7 @@ class BasePage {
         log("SCROLL_WARNING", `Swipe attempt ${attempt} failed: ${swipeErr.message}`);
       }
 
-      await driver.pause(scrollSettleDelay);
+      await driver.pause(settleDelay);
       const swipedElement = await driver.$(exactSelector);
       try {
         if (await swipedElement.isDisplayed()) {
@@ -218,7 +222,7 @@ class BasePage {
         log("SCROLL_WARNING", `Reverse swipe attempt ${attempt} failed: ${swipeErr.message}`);
       }
 
-      await driver.pause(scrollSettleDelay);
+      await driver.pause(settleDelay);
       const swipedElement = await driver.$(exactSelector);
       try {
         if (await swipedElement.isDisplayed()) {
@@ -233,6 +237,10 @@ class BasePage {
   static async findElementContainsFast(driver, text, areaKey = 'global') {
     const selectorStr = `android=new UiSelector().textContains("${text}")`;
     const _t0 = Date.now();
+    const executionMode = process.env.EXECUTION_MODE || config.executionMode || 'standard';
+    const isRapid = executionMode === 'rapid';
+    const maxRetries = isRapid ? 2 : 25;
+    const settleDelay = isRapid ? 200 : scrollSettleDelay;
 
     // ── INITIAL LOOKUP ──────────────────────────────────────────────────────
     // Single non-blocking probe: if the element is already visible, return
@@ -250,7 +258,7 @@ class BasePage {
     // Element not yet visible — allow up to ~2.4s for layout inflation.
     let _retryCount = 0;
     const _retryStart = Date.now();
-    for (let i = 1; i < 25; i++) {
+    for (let i = 1; i < maxRetries; i++) {
       await driver.pause(100);
       _retryCount++;
       try {
@@ -275,7 +283,7 @@ class BasePage {
       log("SCROLL_WARNING", `Scrollable list not found: ${scrollErr.message}. Checking direct visibility again...`);
     }
 
-    await driver.pause(scrollSettleDelay); // let scroll settle
+    await driver.pause(settleDelay); // let scroll settle
     log("FASTPATH", `Scroll completed | scroll=${Date.now() - _scrollStart}ms`);
     
     // RE-FIND the element after scrolling to refresh its coordinates and elementId!
@@ -300,7 +308,7 @@ class BasePage {
         log("SCROLL_WARNING", `Swipe attempt ${attempt} failed: ${swipeErr.message}`);
       }
 
-      await driver.pause(scrollSettleDelay);
+      await driver.pause(settleDelay);
       const swipedElement = await driver.$(selectorStr);
       try {
         if (await swipedElement.isDisplayed()) {
@@ -317,7 +325,7 @@ class BasePage {
         log("SCROLL_WARNING", `Reverse swipe attempt ${attempt} failed: ${swipeErr.message}`);
       }
 
-      await driver.pause(scrollSettleDelay);
+      await driver.pause(settleDelay);
       const swipedElement = await driver.$(selectorStr);
       try {
         if (await swipedElement.isDisplayed()) {

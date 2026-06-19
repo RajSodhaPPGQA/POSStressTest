@@ -422,6 +422,7 @@ async function main() {
     stability.startRun();
     const executionStart = new Date();
     let runStatus = 'SUCCESS';
+    let loopStartTime = null;
     let targetUdid = '';
     let driver;
     let dashboard = null;
@@ -477,7 +478,8 @@ async function main() {
         if (!dashboard) return;
         const s = stability.getSummaryData();
         const perfSummary = perf.getSummaryData();
-        const elapsedMs = Date.now() - executionStart.getTime();
+        const startMs = loopStartTime || executionStart.getTime();
+        const elapsedMs = Date.now() - startMs;
         const elapsedMin = elapsedMs / 60000;
         const startupInclusiveOpm = elapsedMin > 0 ? (s.cyclesCompleted / elapsedMin).toFixed(1) : '0.0';
         const opm = perfSummary.ordersPerMinute && perfSummary.ordersPerMinute !== 'N/A'
@@ -720,6 +722,9 @@ async function main() {
         // CONFIGURABLE ORDERING LOOP
         // ==========================================
         const startTime = Date.now();
+        loopStartTime = startTime;
+        stability.startRun();
+        perf.startRun();
         const durationMs = durationMins * 60 * 1000;
         const networkAndMemoryCheckEveryNCycles = Math.max(1, Number(config.networkAndMemoryCheckEveryNCycles || 10));
         const driverHealthCheckEveryNCycles = Math.max(1, Number(config.driverHealthCheckEveryNCycles || 1));
@@ -1019,7 +1024,7 @@ async function main() {
         runStatus = 'SUCCESS';
         perf.printSummary();
         stability.printSummary('SUCCESS');
-        longRun.printSummary();
+        longRun.printSummary(stability.getSummaryData());
         addDashboardEvent('SUCCESS', `Run complete. Executed ${cycle - 1} cycles`);
         updateDashboardMetrics(cycle - 1);
 
@@ -1028,7 +1033,7 @@ async function main() {
         runStatus = 'FAILED';
         stability.markFatalFailure(stability.classifyFailureReason(error.message));
         stability.printSummary('FAILED');
-        longRun.printSummary();
+        longRun.printSummary(stability.getSummaryData());
         addDashboardEvent('FATAL', error.message);
         updateDashboardMetrics(0);
     } finally {

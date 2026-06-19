@@ -14,19 +14,19 @@ Performance audit comparing Standard Mode against the optimized Rapid Mode on th
 
 | Metric | Standard Mode | Rapid Mode | Delta / Improvement |
 | :--- | :---: | :---: | :---: |
-| **Orders Per Minute (OPM)** | 8.5 OPM | 9.8 OPM | **+1.3 OPM (+15.3%)** |
+| **Orders Per Minute (OPM)** | 8.4 OPM | 9.1 OPM | **+0.7 OPM (+8.3%)** |
 | **Success Rate** | 100.0% | 100.0% | +0.0% |
-| **Average Cycle Time** | 7079 ms | 6122 ms | **-957 ms (-13.5%)** |
-| **Peak Throughput** | 8.3 OPM | 10.2 OPM | **+1.9 OPM (+22.9%)** |
+| **Average Cycle Time** | 7165 ms | 6559 ms | **-606 ms (-8.5%)** |
+| **Peak Throughput** | 8.0 OPM | 9.8 OPM | **+1.8 OPM (+22.5%)** |
 
 ## Timing Breakdown by Phase (Averages)
 
 | Phase | Standard Mode | Rapid Mode | Savings (ms) | Improvement % |
 | :--- | :---: | :---: | :---: | :---: |
-| **Child Selection** | 2069 ms | 574 ms | 1495 ms | 72.3% |
-| **Product Selection (Cart Build)** | 2042 ms | 2461 ms | -419 ms | -20.5% |
-| **Checkout Transition** | 1298 ms | 1407 ms | -109 ms | -8.4% |
-| **Payment** | 1615 ms | 1678 ms | -63 ms | -3.9% |
+| **Child Selection** | 2078 ms | 1220 ms | 858 ms | 41.3% |
+| **Product Selection (Cart Build)** | 2044 ms | 2183 ms | -139 ms | -6.8% |
+| **Checkout Transition** | 1267 ms | 1296 ms | -29 ms | -2.3% |
+| **Payment** | 1723 ms | 1859 ms | -136 ms | -7.9% |
 
 ## Key Insights & Audit Summary
 

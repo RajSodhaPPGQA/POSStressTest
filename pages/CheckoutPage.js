@@ -1,6 +1,7 @@
 const BasePage = require('./BasePage');
 const locators = require('../locators.json');
 const { log } = require('../utils/logger');
+const config = require('../config.json');
 
 class CheckoutPage {
   static async isDisplayed(driver) {
