@@ -15,6 +15,9 @@ const _state = {
 };
 
 class POSPage {
+  static lastSelectedChild = null;
+  static _productCache = new Map();
+
   static _isFatalDriverError(err) {
     const msg = ((err && err.message) || '').toLowerCase();
     return msg.includes('instrumentation process is not running') ||
@@ -104,16 +107,46 @@ class POSPage {
 
   static async clickMenuOption(driver) {
     log("POS_MENU", `Clicking menu option: "${locators.menuOption}"...`);
-    const menuBtn = await BasePage.findElementFast(driver, locators.menuOption);
-    await BasePage.safeClick(driver, menuBtn);
-    
-    // Strategic transition monitor for up to 120 seconds to allow slow menu database loading
     const targetSelector = `android=new UiSelector().text("${locators.nameButton}")`;
     const nameBtn = await driver.$(targetSelector);
+
+    for (let attempt = 1; attempt <= 4; attempt++) {
+      try {
+        log("POS_MENU", `Clicking menu option attempt ${attempt}/4...`);
+        const menuBtn = await BasePage.findElementFast(driver, locators.menuOption);
+        await BasePage.safeClick(driver, menuBtn);
+        
+        // Wait up to 10 seconds for transition before retrying click
+        let transitioned = false;
+        const start = Date.now();
+        while ((Date.now() - start) < 10000) {
+          // Proactively clear any network failure or server error alerts that block loading
+          try {
+            await BasePage.checkForAlertsAndDismiss(driver);
+          } catch (e) {}
+
+          if (await nameBtn.isExisting() && await nameBtn.isDisplayed().catch(() => false)) {
+            transitioned = true;
+            break;
+          }
+          await driver.pause(500);
+        }
+        
+        if (transitioned) {
+          log("POS_MENU", `Successfully transitioned to POS page after clicking "${locators.menuOption}"`);
+          return;
+        }
+        log("POS_MENU_WARNING", `Click on "${locators.menuOption}" did not transition within 10s. Retrying click...`);
+      } catch (err) {
+        log("POS_MENU_WARNING", `Error during menu option click attempt ${attempt}: ${err.message}`);
+        await driver.pause(1000);
+      }
+    }
     
+    // Final wait/fallback to monitor transition
     await BasePage.monitorTransition(driver, async () => {
       return await nameBtn.isExisting() && await nameBtn.isDisplayed();
-    }, 120000, 1000);
+    }, 60000, 1000);
   }
 
   static async clickName(driver) {
@@ -131,6 +164,35 @@ class POSPage {
 
   static async selectChild(driver, childName) {
     log("POS", `Searching and selecting child: "${childName}"...`);
+
+    const executionMode = process.env.EXECUTION_MODE || config.executionMode || 'standard';
+    const isRapid = executionMode === 'rapid';
+
+    // ── RAPID MODE CHILD CONTEXT REUSE ──────────────────────────────────────────
+    if (isRapid && childName === POSPage.lastSelectedChild) {
+      log("CHILD_FASTPATH", `Rapid mode: reusing child context for "${childName}". Attempting rapid select.`);
+      const _rapidStart = Date.now();
+      try {
+        const matches = await driver.$$(`android=new UiSelector().textContains("${childName}")`);
+        if (matches.length > 0 && await matches[0].isDisplayed().catch(() => false)) {
+          const _rapidLocate = Date.now() - _rapidStart;
+          const _clickStart = Date.now();
+          await BasePage.safeClick(driver, matches[0]);
+          const _rapidClick = Date.now() - _clickStart;
+          
+          log("POS", `Child "${childName}" selected rapidly`);
+          perf.recordLocateBreakdown('immediate', _rapidLocate);
+          perf.record(perf.PHASES.CHILD_LOCATE,     _rapidLocate);
+          perf.record(perf.PHASES.CHILD_CLICK,      _rapidClick);
+          perf.record(perf.PHASES.CHILD_TRANSITION, 0); // Skip transition wait in rapid mode
+          POSPage.lastSelectedChild = childName;
+          _state.childListLoaded = true;
+          return;
+        }
+      } catch (e) {
+        log("CHILD_FASTPATH_WARN", `Rapid child selection failed: ${e.message}. Falling back to normal flow.`);
+      }
+    }
 
     // ── SCREEN REUSE FAST PATH ────────────────────────────────────────────────
     // After payment the app returns to the child list screen scrolled to the
@@ -157,28 +219,38 @@ class POSPage {
       let screenTarget = null;
       const _srLocateStart = Date.now();
 
-      const _t1 = Date.now();
-      const srExactMatches = await driver.$$(`android=new UiSelector().text("${childName}")`);
-      const _exactQueryMs = Date.now() - _t1;
-      const _t2 = Date.now();
-      const srExactVisible = srExactMatches.length > 0 && await srExactMatches[0].isDisplayed().catch(() => false);
-      const _exactVisMs = Date.now() - _t2;
-
-      if (srExactVisible) {
-        screenTarget = srExactMatches[0];
-        log("CHILD_FASTPATH", `Element found immediately (exact match) | exact_query=${_exactQueryMs}ms | vis_check=${_exactVisMs}ms`);
-      } else {
-        const _t3 = Date.now();
+      if (isRapid) {
+        // In rapid mode, skip exact match probe and go straight to textContains to save RTT
         const srContainsMatches = await driver.$$(`android=new UiSelector().textContains("${childName}")`);
-        const _containsQueryMs = Date.now() - _t3;
-        const _t4 = Date.now();
         const srContainsVisible = srContainsMatches.length > 0 && await srContainsMatches[0].isDisplayed().catch(() => false);
-        const _containsVisMs = Date.now() - _t4;
         if (srContainsVisible) {
           screenTarget = srContainsMatches[0];
-          log("CHILD_FASTPATH", `Element found immediately (contains match) | exact_query=${_exactQueryMs}ms | exact_vis=${_exactVisMs}ms | contains_query=${_containsQueryMs}ms | contains_vis=${_containsVisMs}ms`);
+          log("CHILD_FASTPATH", `Element found immediately (contains match, rapid)`);
+        }
+      } else {
+        const _t1 = Date.now();
+        const srExactMatches = await driver.$$(`android=new UiSelector().text("${childName}")`);
+        const _exactQueryMs = Date.now() - _t1;
+        const _t2 = Date.now();
+        const srExactVisible = srExactMatches.length > 0 && await srExactMatches[0].isDisplayed().catch(() => false);
+        const _exactVisMs = Date.now() - _t2;
+
+        if (srExactVisible) {
+          screenTarget = srExactMatches[0];
+          log("CHILD_FASTPATH", `Element found immediately (exact match) | exact_query=${_exactQueryMs}ms | vis_check=${_exactVisMs}ms`);
         } else {
-          log("CHILD_FASTPATH", `Element not visible on screen | exact_query=${_exactQueryMs}ms | exact_vis=${_exactVisMs}ms | contains_query=${_containsQueryMs}ms | contains_vis=${_containsVisMs}ms`);
+          const _t3 = Date.now();
+          const srContainsMatches = await driver.$$(`android=new UiSelector().textContains("${childName}")`);
+          const _containsQueryMs = Date.now() - _t3;
+          const _t4 = Date.now();
+          const srContainsVisible = srContainsMatches.length > 0 && await srContainsMatches[0].isDisplayed().catch(() => false);
+          const _containsVisMs = Date.now() - _t4;
+          if (srContainsVisible) {
+            screenTarget = srContainsMatches[0];
+            log("CHILD_FASTPATH", `Element found immediately (contains match) | exact_query=${_exactQueryMs}ms | exact_vis=${_exactVisMs}ms | contains_query=${_containsQueryMs}ms | contains_vis=${_containsVisMs}ms`);
+          } else {
+            log("CHILD_FASTPATH", `Element not visible on screen | exact_query=${_exactQueryMs}ms | exact_vis=${_exactVisMs}ms | contains_query=${_containsQueryMs}ms | contains_vis=${_containsVisMs}ms`);
+          }
         }
       }
       const _srLocateMs = Date.now() - _srLocateStart;
@@ -229,6 +301,7 @@ class POSPage {
           perf.record(perf.PHASES.CHILD_TRANSITION, _srTransMs);
           perf.recordFastpath('childScreen', true);
           _state.childListLoaded = true;
+          POSPage.lastSelectedChild = childName;
           return;
         }
         // Click registered but transition did not complete — fall through to Name/search
@@ -317,6 +390,7 @@ class POSPage {
             perf.record(perf.PHASES.CHILD_LOCATE,     _fpLocateMs);
             perf.record(perf.PHASES.CHILD_CLICK,      _fpClickMs);
             perf.record(perf.PHASES.CHILD_TRANSITION, _fpTransMs);
+            POSPage.lastSelectedChild = childName;
             return; // ✅ fast-path success
           }
           // Click registered but overlay still showing — fall through to search
@@ -394,6 +468,7 @@ class POSPage {
           perf.record(perf.PHASES.CHILD_LOCATE,     _spLocateMs);
           perf.record(perf.PHASES.CHILD_CLICK,      _spClickMs);
           perf.record(perf.PHASES.CHILD_TRANSITION, _spTransMs);
+          POSPage.lastSelectedChild = childName;
           childSelected = true;
           break;
         }
@@ -482,13 +557,28 @@ class POSPage {
    *   - Option C:     "cartProducts": [{ name, qty }]  → all products, in order
    */
   static async addProductsToCart(driver, cartItems) {
-    const baseDelayBetweenQty = config.delayBetweenQuantityClicksMs !== undefined
-      ? config.delayBetweenQuantityClicksMs
-      : 1000;
+    const executionMode = process.env.EXECUTION_MODE || config.executionMode || 'standard';
+    const isRapid = executionMode === 'rapid';
+
+    if (isRapid && cartItems.length > 0) {
+      // Wait for POS page to settle (first product button visible) to ensure elements are loaded
+      try {
+        const firstProdName = cartItems[0].name;
+        const selector = `android=new UiSelector().text("${firstProdName}")`;
+        const prodBtn = await driver.$(selector);
+        await prodBtn.waitForDisplayed({ timeout: 5000, interval: 100 });
+      } catch (e) {
+        log("PRODUCT_WARNING", `Wait for first product "${cartItems[0].name}" settle timed out: ${e.message}`);
+      }
+    }
+
+    const baseDelayBetweenQty = isRapid
+      ? (config.rapidDelayBetweenQuantityClicksMs !== undefined ? config.rapidDelayBetweenQuantityClicksMs : 200)
+      : (config.delayBetweenQuantityClicksMs !== undefined ? config.delayBetweenQuantityClicksMs : 1000);
     const hasQtyGreaterThanOne = Array.isArray(cartItems) && cartItems.some((item) => Number(item.qty) > 1);
     let delayBetweenQty = baseDelayBetweenQty;
 
-    if (hasQtyGreaterThanOne) {
+    if (!isRapid && hasQtyGreaterThanOne) {
       const profile = Array.isArray(config.quantityDelayProfileMs)
         ? config.quantityDelayProfileMs.filter((v) => Number.isFinite(Number(v)) && Number(v) >= 0).map((v) => Number(v))
         : [];
@@ -527,62 +617,87 @@ class POSPage {
         const isFirstClick     = click === 1;
         const _locateStart = Date.now();
 
-        // ── FAST PATH ──────────────────────────────────────────────────────────
-        // Single immediate probe — no retries, no scroll.
-        // Attempted on every click (product button stays in same position for qty > 1).
+        // ── CACHE PROBE (RAPID MODE) ──────────────────────────────────────────
         let fastHit = false;
-        try {
-          const exactMatches = await driver.$$(exactSelector);
-          if (exactMatches.length > 0 && await exactMatches[0].isDisplayed().catch(() => false)) {
-            productEl = exactMatches[0];
-            fastHit = true;
-          } else {
-            // Try contains match as secondary single probe
-            const containsMatches = await driver.$$(containsSelector);
-            if (containsMatches.length > 0 && await containsMatches[0].isDisplayed().catch(() => false)) {
-              productEl = containsMatches[0];
-              fastHit = true;
+        if (isRapid) {
+          const cachedEl = POSPage._productCache.get(name);
+          if (cachedEl) {
+            try {
+              if (await cachedEl.isDisplayed().catch(() => false)) {
+                productEl = cachedEl;
+                fastHit = true;
+                if (isFirstClick) {
+                  perf.recordFastpath('product', true);
+                }
+              }
+            } catch (e) {
+              POSPage._productCache.delete(name);
             }
-          }
-        } catch (e) {}
-
-        if (isFirstClick) {
-          if (fastHit) {
-            log("FASTPATH", `Product visible, skipping search`);
-            perf.recordFastpath('product', true);
-          } else {
-            log("SEARCH", `Product not visible, using search`);
-            perf.recordFastpath('product', false);
           }
         }
 
-        // ── SEARCH FALLBACK ────────────────────────────────────────────────────
-        // Only invoked when the direct probe missed. Polls with brief waits, then
-        // falls back to scroll-based robust search — identical to original logic.
         if (!productEl) {
-          for (let i = 0; i < 7; i++) {  // 7 more iterations (was 8 total, 1 already tried above)
-            try {
-              const exactMatches = await driver.$$(exactSelector);
-              if (exactMatches.length > 0 && await exactMatches[0].isDisplayed()) {
-                productEl = exactMatches[0];
-                break;
-              }
-            } catch (e) {}
-
-            try {
+          // ── FAST PATH ──────────────────────────────────────────────────────────
+          // Single immediate probe — no retries, no scroll.
+          // Attempted on every click (product button stays in same position for qty > 1).
+          try {
+            const exactMatches = await driver.$$(exactSelector);
+            if (exactMatches.length > 0 && await exactMatches[0].isDisplayed().catch(() => false)) {
+              productEl = exactMatches[0];
+              fastHit = true;
+            } else {
+              // Try contains match as secondary single probe
               const containsMatches = await driver.$$(containsSelector);
-              if (containsMatches.length > 0 && await containsMatches[0].isDisplayed()) {
+              if (containsMatches.length > 0 && await containsMatches[0].isDisplayed().catch(() => false)) {
                 productEl = containsMatches[0];
-                break;
+                fastHit = true;
               }
-            } catch (e) {}
+            }
+          } catch (e) {}
 
-            await driver.pause(40);
+          if (isFirstClick) {
+            if (fastHit) {
+              log("FASTPATH", `Product visible, skipping search`);
+              perf.recordFastpath('product', true);
+            } else {
+              log("SEARCH", `Product not visible, using search`);
+              perf.recordFastpath('product', false);
+            }
           }
 
-          // Full scroll-based search if still not found
+          // ── SEARCH FALLBACK ────────────────────────────────────────────────────
+          // Only invoked when the direct probe missed. Polls with brief waits, then
+          // falls back to scroll-based robust search — identical to original logic.
           if (!productEl) {
-            productEl = await BasePage.findElementContainsFast(driver, name);
+            for (let i = 0; i < 7; i++) {  // 7 more iterations (was 8 total, 1 already tried above)
+              try {
+                const exactMatches = await driver.$$(exactSelector);
+                if (exactMatches.length > 0 && await exactMatches[0].isDisplayed()) {
+                  productEl = exactMatches[0];
+                  break;
+                }
+              } catch (e) {}
+
+              try {
+                const containsMatches = await driver.$$(containsSelector);
+                if (containsMatches.length > 0 && await containsMatches[0].isDisplayed()) {
+                  productEl = containsMatches[0];
+                  break;
+                }
+              } catch (e) {}
+
+              await driver.pause(40);
+            }
+
+            // Full scroll-based search if still not found
+            if (!productEl) {
+              productEl = await BasePage.findElementContainsFast(driver, name);
+            }
+          }
+
+          // Cache the found element in rapid mode
+          if (isRapid && productEl) {
+            POSPage._productCache.set(name, productEl);
           }
         }
 
@@ -594,11 +709,17 @@ class POSPage {
           _productClickMs += (Date.now() - _clickStart);
         } catch (clickErr) {
           log("PRODUCT_WARNING", `Click ${click}/${qty} on "${name}" failed: ${clickErr.message}. Re-locating and retrying...`);
+          if (isRapid) {
+            POSPage._productCache.delete(name);
+          }
           productEl = await BasePage.findElementContainsFast(driver, name);
           try {
             const _retryClickStart = Date.now();
             await BasePage.safeClick(driver, productEl);
             _productClickMs += (Date.now() - _retryClickStart);
+            if (isRapid) {
+              POSPage._productCache.set(name, productEl);
+            }
           } catch (retryErr) {
             await BasePage.saveFailureScreenshot(driver, `product_click_fail_${name.replace(/\s+/g, '_')}_${click}`);
             throw new Error(`Failed to click product "${name}" (click ${click}/${qty}): ${retryErr.message}`);
@@ -667,14 +788,19 @@ class POSPage {
 
     // Fast-path wait for Pay button — poll via findElements to avoid stale-element risk.
     const paySelector = `android=new UiSelector().text("${locators.payButton}")`;
-    const payStart = Date.now();
-    let payVisible = false;
-    while (!payVisible && (Date.now() - payStart) < 30000) {
-      const payMatches = await driver.$$(paySelector);
-      payVisible = payMatches.length > 0 && await payMatches[0].isDisplayed().catch(() => false);
-      if (!payVisible) await driver.pause(40);
-    }
-    if (!payVisible) throw new Error('Pay button did not appear within 30s after wallet selection');
+    const executionMode = process.env.EXECUTION_MODE || config.executionMode || 'standard';
+    const isRapid = executionMode === 'rapid';
+    await driver.waitUntil(
+      async () => {
+        const payMatches = await driver.$$(paySelector);
+        return payMatches.length > 0 && await payMatches[0].isDisplayed().catch(() => false);
+      },
+      {
+        timeout: 30000,
+        interval: isRapid ? 100 : 50,
+        timeoutMsg: 'Pay button did not appear within 30s after wallet selection'
+      }
+    );
   }
 }
 

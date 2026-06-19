@@ -17,21 +17,24 @@ class CheckoutPage {
     const payButton = await driver.$(`android=new UiSelector().text("${locators.payButton}")`);
     await BasePage.safeClick(driver, payButton, 1);
 
-    // Fast-path wait for return to POS Main (State C) or Search Child (State D).
-    // Probes via $$ inside the predicate to avoid stale element refs and upfront network round-trips.
-    const closeSelector = `android=new UiSelector().text("${locators.closeButton}")`;
-    const nameSelector  = `android=new UiSelector().text("${locators.nameButton}")`;
+    // Combined Selector to search for CLOSE and Name button in a single WebDriver call
+    const combinedSelector = `android=new UiSelector().textMatches("^(${locators.closeButton}|${locators.nameButton})$")`;
+    const executionMode = process.env.EXECUTION_MODE || config.executionMode || 'standard';
+    const isRapid = executionMode === 'rapid';
 
     await driver.waitUntil(
       async () => {
-        const closes = await driver.$$(closeSelector);
-        if (closes.length > 0 && await closes[0].isDisplayed().catch(() => false)) return true;
-        const names = await driver.$$(nameSelector);
-        return names.length > 0 && await names[0].isDisplayed().catch(() => false);
+        const matches = await driver.$$(combinedSelector);
+        for (const m of matches) {
+          if (await m.isDisplayed().catch(() => false)) {
+            return true;
+          }
+        }
+        return false;
       },
       {
         timeout: 45000,
-        interval: 50,
+        interval: isRapid ? 100 : 50,
         timeoutMsg: 'Expected post-payment screen to return to Name/CLOSE state'
       }
     );

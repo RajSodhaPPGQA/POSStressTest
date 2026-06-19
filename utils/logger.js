@@ -10,8 +10,26 @@ function initLogger(runDir) {
 }
 
 function log(level, msg) {
+  const isRapid = process.env.EXECUTION_MODE === 'rapid';
+  const levelUpper = level.toUpperCase();
+
+  if (isRapid) {
+    const allowed = ['CYCLE', 'OPM', 'SUCCESS', 'ERROR', 'FATAL', 'SETUP', 'DASHBOARD', 'REPORT', 'RECOVERY', 'RELAUNCH'];
+    if (!allowed.includes(levelUpper)) {
+      // Still write to log file, but skip console.log
+      const timestamp = new Date().toISOString();
+      const line = `${timestamp} [${levelUpper}] ${msg}`;
+      if (logFilePath) {
+        try {
+          fs.appendFileSync(logFilePath, `${line}\n`, 'utf8');
+        } catch (_e) {}
+      }
+      return;
+    }
+  }
+
   const timestamp = new Date().toISOString();
-  const line = `${timestamp} [${level.toUpperCase()}] ${msg}`;
+  const line = `${timestamp} [${levelUpper}] ${msg}`;
   console.log(line);
 
   if (logFilePath) {

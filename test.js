@@ -124,6 +124,22 @@ async function createDriverSession(targetUdid, reason = 'startup') {
             log("SETUP", `Creating Appium session (${reason}) attempt ${attempt}/${attempts}...`);
             const driver = await remote(buildRemoteOptions(targetUdid));
             await driver.getWindowSize();
+
+            const currentExecutionMode = process.env.EXECUTION_MODE || config.executionMode || 'standard';
+            if (currentExecutionMode === 'rapid') {
+                try {
+                    log("SETUP", "Rapid mode: Optimizing UiAutomator2 settings...");
+                    await driver.updateSettings({
+                        waitForIdleTimeout: 100,
+                        actionAcknowledgmentTimeout: 0
+                    });
+                } catch (settingsErr) {
+                    log("SETUP_WARNING", `Failed to set Appium settings: ${settingsErr.message}`);
+                }
+                POSPage._productCache.clear();
+                POSPage.lastSelectedChild = null;
+            }
+
             if (reason !== 'initial') {
                 stability.increment('sessionRebuilds');
             }
@@ -209,6 +225,8 @@ async function getDeviceUdid() {
             }
         }
     }
+
+    devices = [...new Set(devices)];
 
     if (devices.length === 1) {
         log("SETUP", `Auto-detected only one connected device: "${devices[0]}". Connecting...`);
@@ -414,16 +432,22 @@ async function main() {
         androidVersion: 'Unknown',
         appiumVersion: 'Unknown'
     };
+    const executionMode = process.env.EXECUTION_MODE || config.executionMode || 'standard';
+    const runMode = process.env.RUN_MODE || config.mode || 'duration';
+    const durationMins = process.env.DURATION_MINS ? parseFloat(process.env.DURATION_MINS) : (config.durationMins || 5);
+    const maxCycles = process.env.MAX_CYCLES ? parseInt(process.env.MAX_CYCLES) : (config.maxCycles || 10);
+
     const startupHealth = {
         appiumReady: false,
         adbConnected: null,
         networkOnline: null,
-        runMode: config.mode || 'duration',
-        durationMins: config.durationMins || 5,
-        maxCycles: config.maxCycles || 10,
+        runMode: runMode,
+        durationMins: durationMins,
+        maxCycles: maxCycles,
         framework: config.framework || 'maui',
         unattended: isUnattendedMode(),
         udid: '',
+        executionMode: executionMode,
     };
 
     try {
@@ -459,12 +483,11 @@ async function main() {
         const opm = perfSummary.ordersPerMinute && perfSummary.ordersPerMinute !== 'N/A'
             ? perfSummary.ordersPerMinute
             : startupInclusiveOpm;
-        const runMode = config.mode || 'duration';
-        const targetDurationMs = (config.durationMins || 5) * 60 * 1000;
+        const targetDurationMs = durationMins * 60 * 1000;
         const elapsedText = formatDuration(elapsedMs);
         const totalText = runMode === 'duration'
             ? formatDuration(targetDurationMs)
-            : `${config.maxCycles || 10} cycles`;
+            : `${maxCycles} cycles`;
         const remainingText = runMode === 'duration'
             ? formatDuration(Math.max(0, targetDurationMs - elapsedMs))
             : 'N/A';
@@ -697,9 +720,7 @@ async function main() {
         // CONFIGURABLE ORDERING LOOP
         // ==========================================
         const startTime = Date.now();
-        const runMode = config.mode || "duration";
-        const durationMs = (config.durationMins || 5) * 60 * 1000;
-        const maxCycles = config.maxCycles || 10;
+        const durationMs = durationMins * 60 * 1000;
         const networkAndMemoryCheckEveryNCycles = Math.max(1, Number(config.networkAndMemoryCheckEveryNCycles || 10));
         const driverHealthCheckEveryNCycles = Math.max(1, Number(config.driverHealthCheckEveryNCycles || 1));
 
@@ -711,6 +732,7 @@ async function main() {
         const childrenList = parseConfigList(config.childName || "10Thaprilposfix6");
 
         let cycle = 1;
+        POSPage.lastSelectedChild = null;
 
         const shouldContinue = () => {
             if (runMode === "cycles") {
@@ -796,30 +818,30 @@ async function main() {
                     await POSPage.selectChild(driver, currentChild);
                     perf.record(perf.PHASES.CHILD_SELECTION, Date.now() - childSelectStart);
 
-                    const delayAfterChild = config.delayAfterChildMs !== undefined ? config.delayAfterChildMs : 500;
-                    await driver.pause(delayAfterChild);
+                    const delayAfterChild = executionMode === 'rapid' ? 0 : (config.delayAfterChildMs !== undefined ? config.delayAfterChildMs : 500);
+                    if (delayAfterChild > 0) await driver.pause(delayAfterChild);
 
                     const productSelectStart = Date.now();
                     await POSPage.addProductsToCart(driver, cartItems);
                     const cartLabel = cartItems.map(i => `${i.name}x${i.qty}`).join(', ');
                     perf.record(perf.PHASES.CART_BUILD, Date.now() - productSelectStart);
 
-                    const delayAfterProduct = config.delayAfterProductMs !== undefined ? config.delayAfterProductMs : 0;
-                    await driver.pause(delayAfterProduct);
+                    const delayAfterProduct = executionMode === 'rapid' ? 0 : (config.delayAfterProductMs !== undefined ? config.delayAfterProductMs : 0);
+                    if (delayAfterProduct > 0) await driver.pause(delayAfterProduct);
 
                     const walletClickStart = Date.now();
                     await POSPage.clickSelectWallet(driver);
                     perf.record(perf.PHASES.WALLET_SELECTION, Date.now() - walletClickStart);
 
-                    const delayAfterWallet = config.delayAfterWalletMs !== undefined ? config.delayAfterWalletMs : 500;
-                    await driver.pause(delayAfterWallet);
+                    const delayAfterWallet = executionMode === 'rapid' ? 0 : (config.delayAfterWalletMs !== undefined ? config.delayAfterWalletMs : 500);
+                    if (delayAfterWallet > 0) await driver.pause(delayAfterWallet);
 
                     const payClickStart = Date.now();
                     await CheckoutPage.clickPay(driver);
                     perf.record(perf.PHASES.PAYMENT, Date.now() - payClickStart);
 
-                    const delayAfterPay = config.delayAfterPayMs !== undefined ? config.delayAfterPayMs : 500;
-                    await driver.pause(delayAfterPay);
+                    const delayAfterPay = executionMode === 'rapid' ? 0 : (config.delayAfterPayMs !== undefined ? config.delayAfterPayMs : 500);
+                    if (delayAfterPay > 0) await driver.pause(delayAfterPay);
 
                     perf.endCycle(Date.now() - cycleStart);
                 })();
@@ -1062,6 +1084,23 @@ async function main() {
                 },
             });
             log("REPORT", `Excel report generated: ${excelPath}`);
+
+            // Save latest summary for benchmarking
+            try {
+                const fs = require('fs');
+                const path = require('path');
+                const summaryPayload = {
+                    status: runStatus,
+                    executionMode,
+                    performance: perfSummary,
+                    stability: stabilitySummary,
+                    longRun: longRunSummary,
+                    cycles: cycleRows
+                };
+                fs.writeFileSync(path.join(__dirname, 'logs', `latest_summary_${executionMode}.json`), JSON.stringify(summaryPayload, null, 2), 'utf8');
+            } catch (err) {
+                log("REPORT_WARNING", `Failed to save benchmark summary JSON: ${err.message}`);
+            }
         } catch (reportErr) {
             log("REPORT_WARNING", `Failed to generate report output: ${reportErr.message}`);
         }

@@ -5,14 +5,20 @@
   "mode": "duration",
   "durationMins": 15,
   "maxCycles": 10,
-  "childName": "02juneRSqa,1 Visitor",
-  "productName": "Berry Custard Milk,Milkshake",
+  "executionMode": "standard",
+  "rapidDelayBetweenQuantityClicksMs": 200,
+  "childName": "02juneRSqa",
+  "productName": "BBQ Sandwich,Apple juice",
   "delayAfterChildMs": 0,
   "delayAfterProductMs": 0,
   "delayAfterWalletMs": 20,
   "delayAfterPayMs": 20,
   "delayBetweenQuantityClicksMs": 1000,
-  "quantityDelayProfileMs": [1000, 850, 700],
+  "quantityDelayProfileMs": [
+    1000,
+    850,
+    700
+  ],
   "quantityDelayProfileStep": 0,
   "maxProductsPerCart": 5,
   "maxQtyPerProduct": 1,
@@ -52,14 +58,44 @@
   "deviceProfile": "s10fe",
   "swipeProfiles": {
     "s10fe": {
-      "global": { "left": 0.15, "top": 0.20, "width": 0.70, "height": 0.60 },
-      "hierarchyList": { "left": 0.12, "top": 0.22, "width": 0.42, "height": 0.56 },
-      "childList": { "left": 0.12, "top": 0.22, "width": 0.45, "height": 0.56 }
+      "global": {
+        "left": 0.15,
+        "top": 0.20,
+        "width": 0.70,
+        "height": 0.60
+      },
+      "hierarchyList": {
+        "left": 0.12,
+        "top": 0.22,
+        "width": 0.42,
+        "height": 0.56
+      },
+      "childList": {
+        "left": 0.12,
+        "top": 0.22,
+        "width": 0.45,
+        "height": 0.56
+      }
     },
     "s8": {
-      "global": { "left": 0.15, "top": 0.20, "width": 0.70, "height": 0.60 },
-      "hierarchyList": { "left": 0.12, "top": 0.22, "width": 0.42, "height": 0.56 },
-      "childList": { "left": 0.12, "top": 0.22, "width": 0.45, "height": 0.56 }
+      "global": {
+        "left": 0.15,
+        "top": 0.20,
+        "width": 0.70,
+        "height": 0.60
+      },
+      "hierarchyList": {
+        "left": 0.12,
+        "top": 0.22,
+        "width": 0.42,
+        "height": 0.56
+      },
+      "childList": {
+        "left": 0.12,
+        "top": 0.22,
+        "width": 0.45,
+        "height": 0.56
+      }
     }
   }
 }
