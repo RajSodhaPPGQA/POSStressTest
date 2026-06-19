@@ -256,7 +256,7 @@ async function setupAndEnterPOS(driver, unknownRecoveryAttempt = 0) {
     } catch (e) {
         log("SETUP_WARNING", `Failed to activate app via driver: ${e.message}`);
     }
-    await driver.pause(8000); // let page fully load after crash recovery / cold start
+    await driver.pause(2500); // short settle; downstream state checks are condition-driven
 
     // Proactively clear any network failure or server error alerts
     try {
@@ -270,18 +270,12 @@ async function setupAndEnterPOS(driver, unknownRecoveryAttempt = 0) {
         case 'State_G':
             log("SETUP", "🎯 State G Detected: Already on Checkout/Pay Page. Completing transaction...");
             await CheckoutPage.clickPay(driver);
-            await driver.pause(5000);
             return;
 
         case 'State_H':
             log("SETUP", "🎯 State H Detected: On POS Product page with a product already selected. Clicking 'Select Wallet'...");
             await POSPage.clickSelectWallet(driver);
-            await driver.pause(5000);
-            log("SETUP", "Waiting for Pay button...");
-            const payBtnOnLaunch = await driver.$(`android=new UiSelector().text("${locators.payButton}")`);
-            await payBtnOnLaunch.waitForDisplayed({ timeout: 15000 });
             await CheckoutPage.clickPay(driver);
-            await driver.pause(5000);
             return;
 
         case 'State_D':
@@ -291,32 +285,20 @@ async function setupAndEnterPOS(driver, unknownRecoveryAttempt = 0) {
         case 'State_C':
             log("SETUP", "🎯 State C Detected: Already on POS page. Opening Search Child...");
             await POSPage.clickName(driver);
-            await driver.pause(5000);
             return;
 
         case 'State_F':
             log("SETUP", "🎯 State F Detected: On POS Menu screen. Clicking 'SENIOR POS MENU'...");
             await POSPage.clickMenuOption(driver);
-            await driver.pause(5000);
-            log("SETUP", "Waiting for POS page to load...");
-            const nameBtn = await driver.$(`android=new UiSelector().text("${locators.nameButton}")`);
-            await nameBtn.waitForDisplayed({ timeout: 20000 });
             await POSPage.clickName(driver);
-            await driver.pause(5000);
             return;
 
         case 'State_B':
             log("SETUP", "🎯 State B Detected: On Dashboard screen. Navigating to POS...");
             await DashboardPage.clickPOS(driver);
-            await driver.pause(5000);
             log("SETUP", "Searching menu option...");
             await POSPage.clickMenuOption(driver);
-            await driver.pause(5000);
-            log("SETUP", "Waiting for POS page to load...");
-            const nameBtnDashboard = await driver.$(`android=new UiSelector().text("${locators.nameButton}")`);
-            await nameBtnDashboard.waitForDisplayed({ timeout: 20000 });
             await POSPage.clickName(driver);
-            await driver.pause(5000);
             return;
 
         case 'State_E':
@@ -346,7 +328,6 @@ async function setupAndEnterPOS(driver, unknownRecoveryAttempt = 0) {
                 await HierarchyPage.clickBackButton(driver);
                 log("SETUP", "🎯 State A Detected: Starting school selection flow...");
                 await HierarchyPage.selectSchool(driver);
-                await driver.pause(5000);
                 await HierarchyPage.selectLeftOption(driver);
             }
             break;
@@ -354,7 +335,6 @@ async function setupAndEnterPOS(driver, unknownRecoveryAttempt = 0) {
         case 'State_A':
             log("SETUP", "🎯 State A Detected: Starting full school selection setup flow...");
             await HierarchyPage.selectSchool(driver);
-            await driver.pause(5000);
             await HierarchyPage.selectLeftOption(driver);
             break;
 
@@ -401,23 +381,16 @@ async function setupAndEnterPOS(driver, unknownRecoveryAttempt = 0) {
 
     // Common hierarchy completion flow (State A & State E)
     await HierarchyPage.completeHierarchySetup(driver);
-    await driver.pause(5000);
 
     log("SETUP", "Waiting for dashboard...");
     const posBtn = await driver.$(`android=new UiSelector().text("${locators.posButton}")`);
     await posBtn.waitForDisplayed({ timeout: 20000 });
     await DashboardPage.clickPOS(driver);
-    await driver.pause(5000);
 
     log("SETUP", "Searching menu option...");
     await POSPage.clickMenuOption(driver);
-    await driver.pause(5000);
 
-    log("SETUP", "Waiting for POS page to load...");
-    const nameBtnHierarchy = await driver.$(`android=new UiSelector().text("${locators.nameButton}")`);
-    await nameBtnHierarchy.waitForDisplayed({ timeout: 20000 });
     await POSPage.clickName(driver);
-    await driver.pause(5000);
 }
 
 // Cart generation is handled by utils/cartGenerator.js
@@ -440,6 +413,17 @@ async function main() {
         deviceName: 'Unknown',
         androidVersion: 'Unknown',
         appiumVersion: 'Unknown'
+    };
+    const startupHealth = {
+        appiumReady: false,
+        adbConnected: null,
+        networkOnline: null,
+        runMode: config.mode || 'duration',
+        durationMins: config.durationMins || 5,
+        maxCycles: config.maxCycles || 10,
+        framework: config.framework || 'maui',
+        unattended: isUnattendedMode(),
+        udid: '',
     };
 
     try {
@@ -500,6 +484,7 @@ async function main() {
     log("SETUP", "Checking Appium server health at http://127.0.0.1:4723/status ...");
     try {
         await checkAppiumHealth();
+        startupHealth.appiumReady = true;
         log("SETUP", "Appium server is healthy and ready.");
     } catch (e) {
         log("FATAL", `Appium server health check failed: ${e.message}`);
@@ -518,6 +503,7 @@ async function main() {
                 startTime: executionStart,
                 endTime: new Date(),
                 metadata: executionMeta,
+                startupHealth,
                 performance: perfSummary,
                 stability: stabilitySummary,
                 longRun: longRunSummary,
@@ -529,14 +515,25 @@ async function main() {
                 summary: {
                     successRate: stabilitySummary.successRate,
                     failureRate: stabilitySummary.failureRate,
+                    attempts: stabilitySummary.attempts,
+                    cyclesCompleted: stabilitySummary.cyclesCompleted,
+                    cyclesFailed: stabilitySummary.cyclesFailed,
                     ordersPerMinute: perfSummary.ordersPerMinute,
                     recoveries: stabilitySummary.recoveredFailures,
                     reconnects: stabilitySummary.adbReconnects,
+                    appRestarts: stabilitySummary.appRestarts,
+                    sessionRebuilds: stabilitySummary.sessionRebuilds,
+                    screenshotsCaptured: stabilitySummary.screenshotsCaptured,
+                    fatalFailures: stabilitySummary.fatalFailures,
+                    startupHealth,
                     longRun: {
                         slowdownDetected: longRunSummary.slowdown?.detected,
                         slowdownPercent: longRunSummary.slowdown?.slowdownPercent,
                         memoryLeakDetected: longRunSummary.memoryLeak?.detected,
+                        memorySlopeMbPerCycle: longRunSummary.memoryLeak?.slopeMbPerCycle,
+                        memoryNetIncreaseMb: longRunSummary.memoryLeak?.netIncreaseMb,
                         recoverySpikesDetected: longRunSummary.recoverySpikes?.detected,
+                        recoveryCount: longRunSummary.recoverySpikes?.totalRecoveries,
                     },
                 },
             });
@@ -562,6 +559,7 @@ async function main() {
     }
 
     targetUdid = await getDeviceUdid();
+    startupHealth.udid = targetUdid;
 
     try {
         executionMeta.deviceName = execSync(`adb -s ${targetUdid} shell getprop ro.product.model`).toString().trim() || 'Unknown';
@@ -570,10 +568,12 @@ async function main() {
 
     // Ensure connection state is stable before starting Appium session
     const adbConnectedAtStart = ensureAdbConnected(targetUdid);
+    startupHealth.adbConnected = adbConnectedAtStart;
     if (!adbConnectedAtStart) {
         throw new Error(`ADB device "${targetUdid}" is not connected or offline before session start.`);
     }
     const networkOnlineAtStart = checkNetworkStatus(targetUdid);
+    startupHealth.networkOnline = networkOnlineAtStart;
     if (!networkOnlineAtStart) {
         log("NETWORK_WARNING", "Device network check failed before session start. Continuing with recovery-capable flow.");
     }
@@ -1027,6 +1027,7 @@ async function main() {
                 startTime: executionStart,
                 endTime: new Date(),
                 metadata: executionMeta,
+                startupHealth,
                 performance: perfSummary,
                 stability: stabilitySummary,
                 longRun: longRunSummary,
@@ -1038,14 +1039,25 @@ async function main() {
                 summary: {
                     successRate: stabilitySummary.successRate,
                     failureRate: stabilitySummary.failureRate,
+                    attempts: stabilitySummary.attempts,
+                    cyclesCompleted: stabilitySummary.cyclesCompleted,
+                    cyclesFailed: stabilitySummary.cyclesFailed,
                     ordersPerMinute: perfSummary.ordersPerMinute,
                     recoveries: stabilitySummary.recoveredFailures,
                     reconnects: stabilitySummary.adbReconnects,
+                    appRestarts: stabilitySummary.appRestarts,
+                    sessionRebuilds: stabilitySummary.sessionRebuilds,
+                    screenshotsCaptured: stabilitySummary.screenshotsCaptured,
+                    fatalFailures: stabilitySummary.fatalFailures,
+                    startupHealth,
                     longRun: {
                         slowdownDetected: longRunSummary.slowdown?.detected,
                         slowdownPercent: longRunSummary.slowdown?.slowdownPercent,
                         memoryLeakDetected: longRunSummary.memoryLeak?.detected,
+                        memorySlopeMbPerCycle: longRunSummary.memoryLeak?.slopeMbPerCycle,
+                        memoryNetIncreaseMb: longRunSummary.memoryLeak?.netIncreaseMb,
                         recoverySpikesDetected: longRunSummary.recoverySpikes?.detected,
+                        recoveryCount: longRunSummary.recoverySpikes?.totalRecoveries,
                     },
                 },
             });

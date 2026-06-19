@@ -37,3 +37,6 @@ screenshots/
 # Runtime-generated temporary files
 config.runtime.json
 test.runtime.js
+
+# Local interview prep document
+InterviewQnA.md

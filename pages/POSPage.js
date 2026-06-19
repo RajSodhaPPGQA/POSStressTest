@@ -482,9 +482,24 @@ class POSPage {
    *   - Option C:     "cartProducts": [{ name, qty }]  → all products, in order
    */
   static async addProductsToCart(driver, cartItems) {
-    const delayBetweenQty = config.delayBetweenQuantityClicksMs !== undefined
+    const baseDelayBetweenQty = config.delayBetweenQuantityClicksMs !== undefined
       ? config.delayBetweenQuantityClicksMs
       : 1000;
+    const hasQtyGreaterThanOne = Array.isArray(cartItems) && cartItems.some((item) => Number(item.qty) > 1);
+    let delayBetweenQty = baseDelayBetweenQty;
+
+    if (hasQtyGreaterThanOne) {
+      const profile = Array.isArray(config.quantityDelayProfileMs)
+        ? config.quantityDelayProfileMs.filter((v) => Number.isFinite(Number(v)) && Number(v) >= 0).map((v) => Number(v))
+        : [];
+      if (profile.length > 0) {
+        const requestedStep = Number(config.quantityDelayProfileStep || 0);
+        const boundedStep = Number.isFinite(requestedStep)
+          ? Math.max(0, Math.min(profile.length - 1, Math.floor(requestedStep)))
+          : 0;
+        delayBetweenQty = profile[boundedStep];
+      }
+    }
 
     // Cart-build sub-phase instrumentation (timing only; no behavior changes)
     let _productLocateMs = 0;
@@ -493,6 +508,7 @@ class POSPage {
 
     // Log full cart before starting execution
     log("CART", `Executing cart (${cartItems.length} product${cartItems.length !== 1 ? 's' : ''}):`);
+    log("CART", `Quantity click delay profile: ${hasQtyGreaterThanOne ? `qty>1 tuned (${delayBetweenQty}ms)` : `default (${delayBetweenQty}ms)`}`);
     for (const item of cartItems) {
       log("CART", `  ${item.name} x${item.qty}`);
     }

@@ -40,15 +40,107 @@ function row(label, value, cls = '') {
   return `<tr><td>${esc(label)}</td><td class="${cls}">${esc(value)}</td></tr>`;
 }
 
+function toNumberPercent(value) {
+  const n = Number(String(value || '').replace('%', '').trim());
+  return Number.isFinite(n) ? n : 0;
+}
+
+function classifyRunHealth({ status, stability, longRun, startupHealth }) {
+  const reasons = [];
+  const successRate = toNumberPercent(stability?.successRate);
+  const fatalFailures = Number(stability?.fatalFailures || 0);
+  const appiumReady = startupHealth?.appiumReady;
+  const adbConnected = startupHealth?.adbConnected;
+  const slowdownDetected = Boolean(longRun?.slowdown?.detected);
+  const memoryLeakDetected = Boolean(longRun?.memoryLeak?.detected);
+
+  if (status !== 'SUCCESS') reasons.push('Run did not complete successfully');
+  if (fatalFailures > 0) reasons.push(`Fatal failures observed (${fatalFailures})`);
+  if (successRate < 98) reasons.push(`Success rate below target (${successRate.toFixed(1)}%)`);
+  if (appiumReady === false) reasons.push('Startup health gate: Appium not ready');
+  if (adbConnected === false) reasons.push('Startup health gate: ADB not connected');
+  if (memoryLeakDetected) reasons.push('Memory leak indicator detected');
+
+  if (reasons.length > 0) {
+    return { verdict: 'At Risk', cls: 'fail', reasons };
+  }
+
+  if (slowdownDetected) {
+    return {
+      verdict: 'Monitor',
+      cls: 'recovery',
+      reasons: ['Cycle slowdown trend detected (stability still acceptable)'],
+    };
+  }
+
+  return { verdict: 'Healthy', cls: 'pass', reasons: ['All primary health checks look stable'] };
+}
+
+function buildRecommendations({ performance, longRun, stability }) {
+  const tips = [];
+  const bottlenecks = performance?.bottlenecks || [];
+  const topBottleneck = bottlenecks[0]?.label;
+  const slowdownDetected = Boolean(longRun?.slowdown?.detected);
+  const memoryLeakDetected = Boolean(longRun?.memoryLeak?.detected);
+  const recoveryCount = Number(longRun?.recoverySpikes?.totalRecoveries || 0);
+  const reconnects = Number(stability?.adbReconnects || 0);
+
+  if (topBottleneck) {
+    tips.push(`Primary bottleneck is ${topBottleneck}; focus tuning there first.`);
+  }
+  if (slowdownDetected) {
+    tips.push('Slowdown trend detected: compare first-window vs last-window cycle timings and inspect backend response drift.');
+  }
+  if (memoryLeakDetected) {
+    tips.push('Memory-growth signal detected: consider lowering proactive relaunch interval or tightening memory recycle thresholds.');
+  }
+  if (reconnects > 0 || recoveryCount > 0) {
+    tips.push('Recoveries occurred: verify device/network stability and review corresponding run.log segments for repeating patterns.');
+  }
+  if (tips.length === 0) {
+    tips.push('No immediate action needed; continue periodic long-run smokes to confirm trend stability.');
+  }
+
+  return tips.slice(0, 4);
+}
+
+function buildRecentCyclesTable(cycleRows) {
+  if (!Array.isArray(cycleRows) || cycleRows.length === 0) {
+    return '<p class="muted">No cycle-level rows captured for this run.</p>';
+  }
+
+  const recent = cycleRows.slice(-10).reverse();
+  const rows = recent.map((r) => {
+    const statusText = String(r.status || 'UNKNOWN').toUpperCase();
+    const statusCls = statusText === 'PASS' ? 'pass' : 'fail';
+    const recoveryYes = String(r.recovery || '').toLowerCase() === 'yes';
+    return `<tr>
+      <td>${esc(r.cycle)}</td>
+      <td class="${statusCls}">${esc(statusText)}</td>
+      <td>${esc(`${r.durationMs} ms`)}</td>
+      <td class="${recoveryYes ? 'recovery' : ''}">${esc(r.recovery || 'No')}</td>
+    </tr>`;
+  }).join('');
+
+  return `<table>
+    <thead>
+      <tr><th>Cycle</th><th>Status</th><th>Duration</th><th>Recovered</th></tr>
+    </thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+}
+
 function buildHtml(payload) {
   const {
     status,
     startTime,
     endTime,
     metadata,
+    startupHealth,
     performance,
     stability,
     longRun,
+    cycleRows,
   } = payload;
 
   const bottlenecks = (performance.bottlenecks || [])
@@ -66,6 +158,14 @@ function buildHtml(payload) {
   const slowdown = longRunData.slowdown || {};
   const memoryLeak = longRunData.memoryLeak || {};
   const recoverySpikes = longRunData.recoverySpikes || {};
+  const startup = startupHealth || {};
+  const boolText = (v) => (v === true ? 'Yes' : (v === false ? 'No' : 'Unknown'));
+  const runHealth = classifyRunHealth({ status, stability, longRun: longRunData, startupHealth: startup });
+  const recommendations = buildRecommendations({ performance, longRun: longRunData, stability });
+  const successRateNum = toNumberPercent(stability.successRate || '0%');
+  const failureRateNum = toNumberPercent(stability.failureRate || '0%');
+  const attempts = Number(stability.attempts || 0);
+  const recentCyclesTable = buildRecentCyclesTable(cycleRows);
 
   return `<!doctype html>
 <html lang="en">
@@ -113,6 +213,29 @@ function buildHtml(payload) {
     .pass { color: var(--pass); font-weight: 700; }
     .fail { color: var(--fail); font-weight: 700; }
     .recovery { color: var(--recovery); font-weight: 700; }
+    .muted { color: var(--muted); }
+    .kpis {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+    .kpi {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px 12px;
+    }
+    .kpi .label {
+      color: var(--muted);
+      font-size: 12px;
+      margin-bottom: 4px;
+    }
+    .kpi .value {
+      font-size: 20px;
+      font-weight: 800;
+      line-height: 1.1;
+    }
     .grid {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
@@ -134,6 +257,14 @@ function buildHtml(payload) {
       border-collapse: collapse;
       font-size: 14px;
     }
+    th {
+      text-align: left;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      border-bottom: 1px solid var(--border);
+      padding: 7px 0;
+    }
     td {
       padding: 7px 0;
       border-bottom: 1px solid var(--border);
@@ -153,6 +284,28 @@ function buildHtml(payload) {
       color: var(--muted);
       font-size: 12px;
     }
+    .meter-wrap {
+      display: grid;
+      gap: 8px;
+    }
+    .meter-label {
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 2px;
+    }
+    .meter {
+      background: #eef2f7;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      height: 10px;
+      overflow: hidden;
+    }
+    .meter-fill {
+      height: 100%;
+      border-radius: 8px;
+    }
+    .meter-success { background: linear-gradient(90deg, #16a34a, #15803d); }
+    .meter-failure { background: linear-gradient(90deg, #ef4444, #b91c1c); }
   </style>
 </head>
 <body>
@@ -162,17 +315,70 @@ function buildHtml(payload) {
       <div class="pill ${statusClass}">Status: ${esc(status)}</div>
     </div>
 
+    <section class="kpis">
+      <div class="kpi">
+        <div class="label">Orders / Minute</div>
+        <div class="value">${esc(performance.ordersPerMinute || 'N/A')}</div>
+      </div>
+      <div class="kpi">
+        <div class="label">Success Rate</div>
+        <div class="value pass">${esc(stability.successRate || '0.0%')}</div>
+      </div>
+      <div class="kpi">
+        <div class="label">Cycles</div>
+        <div class="value">${esc(String(performance.completedCycles || 0))}</div>
+      </div>
+      <div class="kpi">
+        <div class="label">Recoveries</div>
+        <div class="value recovery">${esc(String(stability.recoveredFailures || 0))}</div>
+      </div>
+      <div class="kpi">
+        <div class="label">Run Health</div>
+        <div class="value ${runHealth.cls}">${esc(runHealth.verdict)}</div>
+      </div>
+    </section>
+
     <div class="grid">
+      <section class="card">
+        <h2>Run Health Verdict</h2>
+        <table>
+          ${row('Verdict', runHealth.verdict, runHealth.cls)}
+          ${row('Run Status', status, statusClass)}
+          ${row('Total Attempts', attempts || 0)}
+          ${row('Fatal Failures', stability.fatalFailures || 0, (stability.fatalFailures || 0) > 0 ? 'fail' : 'pass')}
+        </table>
+        <div style="margin-top:8px; font-size:14px;">
+          <strong>Why This Verdict</strong>
+          <ul>${runHealth.reasons.map((r) => `<li>${esc(r)}</li>`).join('')}</ul>
+        </div>
+      </section>
+
       <section class="card">
         <h2>Execution Summary</h2>
         <table>
           ${row('Start Time', formatDateTime(startTime))}
           ${row('End Time', formatDateTime(endTime))}
           ${row('Duration', formatDuration(new Date(endTime) - new Date(startTime)))}
+          ${row('Stability Duration', stability.durationText || formatDuration(stability.durationMs || 0))}
           ${row('Device Name', metadata.deviceName || 'Unknown')}
           ${row('Android Version', metadata.androidVersion || 'Unknown')}
           ${row('Appium Version', metadata.appiumVersion || 'Unknown')}
           ${row('Execution Status', status, statusClass)}
+        </table>
+      </section>
+
+      <section class="card">
+        <h2>Startup Health Gate</h2>
+        <table>
+          ${row('Appium Ready', boolText(startup.appiumReady), startup.appiumReady === true ? 'pass' : (startup.appiumReady === false ? 'fail' : ''))}
+          ${row('ADB Connected', boolText(startup.adbConnected), startup.adbConnected === true ? 'pass' : (startup.adbConnected === false ? 'fail' : ''))}
+          ${row('Network Online', boolText(startup.networkOnline), startup.networkOnline === true ? 'pass' : (startup.networkOnline === false ? 'fail' : ''))}
+          ${row('Run Mode', startup.runMode || 'Unknown')}
+          ${row('Duration Target', startup.durationMins != null ? `${startup.durationMins} mins` : 'N/A')}
+          ${row('Cycle Target', startup.maxCycles != null ? startup.maxCycles : 'N/A')}
+          ${row('Framework', startup.framework || 'Unknown')}
+          ${row('Unattended', boolText(startup.unattended), startup.unattended === true ? 'recovery' : '')}
+          ${row('UDID', startup.udid || 'Unknown')}
         </table>
       </section>
 
@@ -190,6 +396,16 @@ function buildHtml(payload) {
         <div style="margin-top:8px; font-size:14px;">
           <strong>Top Bottlenecks</strong>
           <ul>${bottlenecks || '<li>None</li>'}</ul>
+        </div>
+        <div class="meter-wrap" style="margin-top:10px;">
+          <div>
+            <div class="meter-label">Success Distribution (${esc(stability.successRate || '0.0%')} pass / ${esc(stability.failureRate || '0.0%')} fail)</div>
+            <div class="meter"><div class="meter-fill meter-success" style="width:${Math.max(0, Math.min(100, successRateNum))}%;"></div></div>
+          </div>
+          <div>
+            <div class="meter-label">Failure Portion</div>
+            <div class="meter"><div class="meter-fill meter-failure" style="width:${Math.max(0, Math.min(100, failureRateNum))}%;"></div></div>
+          </div>
         </div>
       </section>
 
@@ -213,6 +429,7 @@ function buildHtml(payload) {
         <h2>Failure Summary</h2>
         <table>
           ${row('Fatal Failures', stability.fatalFailures || 0, (stability.fatalFailures || 0) > 0 ? 'fail' : '')}
+          ${row('Total Attempts', attempts || 0)}
           ${failureRows}
         </table>
       </section>
@@ -223,12 +440,28 @@ function buildHtml(payload) {
           ${row('Cycles Tracked', longRunData.totalCyclesTracked || 0)}
           ${row('Cycle Duration Trend', slowdown.detected ? 'Slowdown Detected' : 'Stable', slowdown.detected ? 'fail' : 'pass')}
           ${row('Cycle 1 -> Last', `${slowdown.firstCycleSeconds || 0}s -> ${slowdown.lastCycleSeconds || 0}s`)}
+          ${row('Trend Window Size', slowdown.windowSize || 'N/A')}
           ${row('Slowdown Percent', `${slowdown.slowdownPercent || 0}%`, slowdown.detected ? 'fail' : 'pass')}
+          ${row('Slowdown Note', slowdown.reason || 'N/A')}
           ${row('Memory Leak Indicator', memoryLeak.detected ? 'Detected' : 'Not Detected', memoryLeak.detected ? 'fail' : 'pass')}
           ${row('Memory Net Increase', `${memoryLeak.netIncreaseMb || 0} MB`, memoryLeak.detected ? 'fail' : '')}
+          ${row('Memory Slope', `${memoryLeak.slopeMbPerCycle || 0} MB/cycle`, memoryLeak.detected ? 'fail' : 'pass')}
+          ${row('Memory Note', memoryLeak.reason || 'N/A')}
           ${row('Recovery Spikes', recoverySpikes.detected ? 'Detected' : 'Not Detected', recoverySpikes.detected ? 'recovery' : 'pass')}
           ${row('Recovery Count', recoverySpikes.totalRecoveries || 0, (recoverySpikes.totalRecoveries || 0) > 0 ? 'recovery' : '')}
+          ${row('Recovery Baseline Rate', recoverySpikes.baselineRate != null ? recoverySpikes.baselineRate : 'N/A')}
+          ${row('Recovery Note', recoverySpikes.reason || 'N/A')}
         </table>
+      </section>
+
+      <section class="card">
+        <h2>Actionable Recommendations</h2>
+        <ul>${recommendations.map((tip) => `<li>${esc(tip)}</li>`).join('')}</ul>
+      </section>
+
+      <section class="card">
+        <h2>Recent Cycle Outcomes</h2>
+        ${recentCyclesTable}
       </section>
     </div>
 

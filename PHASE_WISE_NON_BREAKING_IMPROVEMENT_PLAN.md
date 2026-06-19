@@ -48,29 +48,38 @@ Expected effect:
 - Better OPM observability accuracy.
 - Small throughput gain by reducing non-essential per-cycle overhead.
 
-## Phase 3 (Next, Safe)
-Status: Planned
+## Phase 3 (Implemented) - Setup/Qty Delay Tuning (Safe)
+Status: Done
 
 1. Tune quantity delay only when qty > 1 test profile is used
 - Lower delayBetweenQuantityClicksMs incrementally (1000 -> 850 -> 700) with validation.
 - Roll back immediately if cart increment reliability drops.
+- Implemented with qty-aware profile controls:
+  - quantityDelayProfileMs (default: [1000, 850, 700])
+  - quantityDelayProfileStep (default: 0)
+- Tuning profile applies only when cart includes qty > 1.
 
 2. Tighten setup fixed waits to condition-first where already available
 - Replace selected fixed pauses in setup paths with existing state checks.
 - Keep fallback waits for flaky transitions.
+- Implemented by removing selected setup-path fixed 5s pauses where existing page-object condition waits already exist.
 
 Expected effect:
 - Moderate throughput gain with low-to-medium risk if done carefully.
 
-## Phase 4 (Optional, Safe)
-Status: Planned
+## Phase 4 (Implemented) - Operational Hygiene (Safe)
+Status: Done
 
 1. Artifact retention policy
 - Keep last N run folders or last X days to control disk growth.
 - No impact on run logic.
+- Implemented via config keys:
+  - keepLastRunFolders (0 disables count-based pruning)
+  - keepRunFoldersForDays (0 disables age-based pruning)
 
 2. Health-gate summary in reports
 - Add startup HEALTH snapshot in final report for quicker diagnostics.
+- Implemented in HTML report as "Startup Health Gate" section.
 
 Expected effect:
 - Operational stability and easier diagnostics over long-run usage.
@@ -87,4 +96,9 @@ Expected effect:
 - Revert only these keys if needed:
   - networkAndMemoryCheckEveryNCycles
   - driverHealthCheckEveryNCycles
+- Additional rollback/tuning keys for Phase 3/4:
+  - quantityDelayProfileMs
+  - quantityDelayProfileStep
+  - keepLastRunFolders
+  - keepRunFoldersForDays
 - Dashboard OPM source change is display-only and can be reverted independently.
