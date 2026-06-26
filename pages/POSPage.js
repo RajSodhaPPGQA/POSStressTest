@@ -560,16 +560,9 @@ class POSPage {
     const executionMode = process.env.EXECUTION_MODE || config.executionMode || 'standard';
     const isRapid = executionMode === 'rapid';
 
-    if (isRapid && cartItems.length > 0) {
-      // Wait for POS page to settle (first product button visible) to ensure elements are loaded
-      try {
-        const firstProdName = cartItems[0].name;
-        const selector = `android=new UiSelector().text("${firstProdName}")`;
-        const prodBtn = await driver.$(selector);
-        await prodBtn.waitForDisplayed({ timeout: 5000, interval: 100 });
-      } catch (e) {
-        log("PRODUCT_WARNING", `Wait for first product "${cartItems[0].name}" settle timed out: ${e.message}`);
-      }
+    if (isRapid) {
+      // Clear product cache at the beginning of each cycle's cart build to avoid stale element references from previous cycles
+      POSPage._productCache.clear();
     }
 
     const baseDelayBetweenQty = isRapid
@@ -622,16 +615,13 @@ class POSPage {
         if (isRapid) {
           const cachedEl = POSPage._productCache.get(name);
           if (cachedEl) {
-            try {
-              if (await cachedEl.isDisplayed().catch(() => false)) {
-                productEl = cachedEl;
-                fastHit = true;
-                if (isFirstClick) {
-                  perf.recordFastpath('product', true);
-                }
-              }
-            } catch (e) {
-              POSPage._productCache.delete(name);
+            // Since the cache is cleared at the start of addProductsToCart, any hit here
+            // is guaranteed to be from the current transaction context. We bypass isDisplayed()
+            // to save a costly Appium round-trip (retries/healing handled in catch block below).
+            productEl = cachedEl;
+            fastHit = true;
+            if (isFirstClick) {
+              perf.recordFastpath('product', true);
             }
           }
         }

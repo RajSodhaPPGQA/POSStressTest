@@ -1,4 +1,10 @@
 {
+  "retention": {
+    "enabled": true,
+    "cleanupOnStartup": true,
+    "maxDays": 30,
+    "maxRunFolders": 30
+  },
   "udid": "RZ2Y9007LFF",
   "framework": "maui",
   "platformType": "maui",
@@ -43,9 +49,9 @@
   "adbWaitForDeviceTimeoutMs": 20000,
   "newCommandTimeout": 300,
   "proactiveRelaunchCycles": 30,
-  "maxMemoryLimitMb": 1000,
+  "maxMemoryLimitMb": 750,
   "maxCycleTimeMs": 90000,
-  "networkAndMemoryCheckEveryNCycles": 12,
+  "networkAndMemoryCheckEveryNCycles": 6,
   "driverHealthCheckEveryNCycles": 2,
   "unknownStateRecoveryLimit": 5,
   "driverInitRetries": 4,

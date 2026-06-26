@@ -53,6 +53,7 @@ const HierarchyPage = require('./pages/HierarchyPage');
 const POSPage = require('./pages/POSPage');
 const CheckoutPage = require('./pages/CheckoutPage');
 const locators = require('./locators.json');
+const { handleGlobalPopups } = require('./utils/popupManager');
 
 // Dynamic config overrides for locators
 if (config.schoolDev) locators.schoolDev = config.schoolDev;
@@ -268,6 +269,14 @@ async function getDeviceUdid() {
 async function setupAndEnterPOS(driver, unknownRecoveryAttempt = 0) {
     const unknownRecoveryLimit = config.unknownStateRecoveryLimit || 3;
     log("SETUP", "App launched / recovered. Detecting current screen...");
+
+    // Global Popup Handling (After App Launch & Recovery)
+    try {
+        await handleGlobalPopups(driver);
+    } catch (err) {
+        log("WARN", `Global popup handler error on launch/recovery: ${err.message}`);
+    }
+
     try {
         log("SETUP", "Activating app com.parentpay.PointOfService to ensure foreground focus...");
         await driver.activateApp('com.parentpay.PointOfService');
@@ -275,6 +284,13 @@ async function setupAndEnterPOS(driver, unknownRecoveryAttempt = 0) {
         log("SETUP_WARNING", `Failed to activate app via driver: ${e.message}`);
     }
     await driver.pause(2500); // short settle; downstream state checks are condition-driven
+
+    // Global Popup Handling (Before State Detection)
+    try {
+        await handleGlobalPopups(driver);
+    } catch (err) {
+        log("WARN", `Global popup handler error before state detection: ${err.message}`);
+    }
 
     // Proactively clear any network failure or server error alerts
     try {
@@ -313,8 +329,16 @@ async function setupAndEnterPOS(driver, unknownRecoveryAttempt = 0) {
 
         case 'State_B':
             log("SETUP", "🎯 State B Detected: On Dashboard screen. Navigating to POS...");
+            // Before major navigation / entering POS flow
+            try {
+                await handleGlobalPopups(driver);
+            } catch (e) {}
             await DashboardPage.clickPOS(driver);
             log("SETUP", "Searching menu option...");
+            // Before menu click
+            try {
+                await handleGlobalPopups(driver);
+            } catch (e) {}
             await POSPage.clickMenuOption(driver);
             await POSPage.clickName(driver);
             return;
@@ -403,9 +427,16 @@ async function setupAndEnterPOS(driver, unknownRecoveryAttempt = 0) {
     log("SETUP", "Waiting for dashboard...");
     const posBtn = await driver.$(`android=new UiSelector().text("${locators.posButton}")`);
     await posBtn.waitForDisplayed({ timeout: 20000 });
+    // Before major navigation / entering POS flow
+    try {
+        await handleGlobalPopups(driver);
+    } catch (e) {}
     await DashboardPage.clickPOS(driver);
 
     log("SETUP", "Searching menu option...");
+    try {
+        await handleGlobalPopups(driver);
+    } catch (e) {}
     await POSPage.clickMenuOption(driver);
 
     await POSPage.clickName(driver);
@@ -418,6 +449,16 @@ async function main() {
     const runDir = initRunArtifacts();
     initLogger(runDir);
     log("SETUP", `Run output directory: ${runDir}`);
+
+    // Execute retention policy cleanup on startup if configured
+    if (config.retention && config.retention.enabled && config.retention.cleanupOnStartup) {
+        try {
+            const { cleanupArtifacts } = require('./utils/retentionManager');
+            await cleanupArtifacts();
+        } catch (cleanupErr) {
+            log("WARN", `Failed to run startup artifact cleanup: ${cleanupErr.message}`);
+        }
+    }
 
     stability.startRun();
     const executionStart = new Date();
@@ -779,10 +820,22 @@ async function main() {
                     }
                 }
 
-                // 3. Proactive App Relaunch Cycle check (timer-based: just log, no restart)
+                // 3. Proactive App Relaunch Cycle check
                 const proactivelyRelaunchCycleLimit = config.proactiveRelaunchCycles;
                 if (proactivelyRelaunchCycleLimit && cycle > 1 && (cycle - 1) % proactivelyRelaunchCycleLimit === 0) {
-                    log("CYCLE", `📍 Proactive interval marker at cycle ${cycle} (${proactivelyRelaunchCycleLimit} cycle boundary). Session still healthy, continuing without restart.`);
+                    log("RELAUNCH", `📍 Proactive relaunch limit reached at cycle ${cycle} (${proactivelyRelaunchCycleLimit} cycles). Bouncing app via Appium...`);
+                    try {
+                        try { await driver.terminateApp('com.parentpay.PointOfService'); } catch (e) { }
+                        await driver.pause(1500);
+                        await driver.activateApp('com.parentpay.PointOfService');
+                        stability.increment('appRestarts');
+                        await driver.pause(3000);
+                        await setupAndEnterPOS(driver);
+                        log("RELAUNCH", "Proactive relaunch complete. Resuming ordering loop...");
+                    } catch (memErr) {
+                        log("RELAUNCH_WARNING", `Proactive app bounce failed (${memErr.message}), falling back to full session recovery...`);
+                        throw new Error("PROACTIVE_MEM_RECYCLE");
+                    }
                 }
 
                 // Pick child and product
@@ -820,6 +873,10 @@ async function main() {
                     perf.startCycle();
 
                     const childSelectStart = Date.now();
+                    // Before major navigation: child selection
+                    try {
+                        await handleGlobalPopups(driver);
+                    } catch (e) {}
                     await POSPage.selectChild(driver, currentChild);
                     perf.record(perf.PHASES.CHILD_SELECTION, Date.now() - childSelectStart);
 
@@ -827,6 +884,10 @@ async function main() {
                     if (delayAfterChild > 0) await driver.pause(delayAfterChild);
 
                     const productSelectStart = Date.now();
+                    // Before major action: cart build
+                    try {
+                        await handleGlobalPopups(driver);
+                    } catch (e) {}
                     await POSPage.addProductsToCart(driver, cartItems);
                     const cartLabel = cartItems.map(i => `${i.name}x${i.qty}`).join(', ');
                     perf.record(perf.PHASES.CART_BUILD, Date.now() - productSelectStart);
@@ -835,6 +896,10 @@ async function main() {
                     if (delayAfterProduct > 0) await driver.pause(delayAfterProduct);
 
                     const walletClickStart = Date.now();
+                    // Before major navigation: select wallet
+                    try {
+                        await handleGlobalPopups(driver);
+                    } catch (e) {}
                     await POSPage.clickSelectWallet(driver);
                     perf.record(perf.PHASES.WALLET_SELECTION, Date.now() - walletClickStart);
 
@@ -842,6 +907,10 @@ async function main() {
                     if (delayAfterWallet > 0) await driver.pause(delayAfterWallet);
 
                     const payClickStart = Date.now();
+                    // Before major action: checkout/payment
+                    try {
+                        await handleGlobalPopups(driver);
+                    } catch (e) {}
                     await CheckoutPage.clickPay(driver);
                     perf.record(perf.PHASES.PAYMENT, Date.now() - payClickStart);
 

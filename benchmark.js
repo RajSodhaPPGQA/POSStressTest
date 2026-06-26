@@ -5,7 +5,7 @@ const fs = require('fs');
 const path = require('path');
 
 const BENCHMARK_CYCLES = process.env.BENCHMARK_CYCLES || '5';
-const artifactDir = process.env.ARTIFACT_DIR || __dirname;
+const artifactDir = process.env.ARTIFACT_DIR || path.join(__dirname, 'docs');
 
 function runTestMode(mode) {
   console.log(`\n==================================================`);

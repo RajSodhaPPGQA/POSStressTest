@@ -3,6 +3,7 @@ const config = require('../config.json');
 const { log } = require('../utils/logger');
 const stability = require('../utils/stabilityMetrics');
 const { getRunDir } = require('../utils/runArtifacts');
+const { handleGlobalPopups } = require('../utils/popupManager');
 
 const defaultWait = (config.timeouts && config.timeouts.defaultWaitMs) || 15000;
 const scrollSettleDelay = config.connectionMode === 'usb' ? 500 : 1500;
@@ -385,6 +386,12 @@ class BasePage {
    */
   static async checkForAlertsAndDismiss(driver) {
     try {
+      // 1. Run global popup handler first
+      const handledGlobal = await handleGlobalPopups(driver);
+      if (handledGlobal) {
+        return true;
+      }
+
       // Consolidated XPath targeting:
       // 1. Configured ParentPay POS popups/modals
       // 2. Native OS Dialog buttons (Wait, OK, Close app, Dismiss, Retry, Close, CLOSE)
