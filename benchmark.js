@@ -91,7 +91,7 @@ Performance audit comparing Standard Mode against the optimized Rapid Mode on th
 > Target performance: **11-12+ OPM** with **>=95% success rate**. Verify rapid mode achieves this criteria.
 `;
 
-  const reportPath = path.join(artifactDir, 'benchmark_report.md');
+  const reportPath = path.join(artifactDir, 'BenchmarkReport.md');
   fs.writeFileSync(reportPath, reportContent, 'utf8');
   console.log(`\n🎉 Benchmark Report generated at: ${reportPath}`);
 }

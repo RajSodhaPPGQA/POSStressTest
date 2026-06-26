@@ -143,4 +143,4 @@ If Appium cannot connect or the device goes offline:
 ---
 
 ## 9. Future Roadmap & Tech Debt
-Known areas of framework improvements, memory trends verification, and CI/CD integration are cataloged in [TECH_DEBT.md](file:///d:/POSStressTest/docs/TECH_DEBT.md).
+Known areas of framework improvements, memory trends verification, and CI/CD integration are cataloged in [TechDebt.md](file:///d:/POSStressTest/docs/TechDebt.md).
