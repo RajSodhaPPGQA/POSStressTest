@@ -33,25 +33,15 @@ class POSPage {
     const selector = `android=new UiSelector().text("${locators.selectWalletButton}")`;
     const start = Date.now();
     let pollCount = 0;
-    let firstVisibleAt = null;
-    let firstEnabledAt = null;
+    const walletEl = await driver.$(selector);
 
     while ((Date.now() - start) < timeoutMs) {
       pollCount++;
       try {
-        const matches = await driver.$$(selector);
-        if (matches.length > 0) {
-          if (firstVisibleAt == null) {
-            firstVisibleAt = Date.now();
-          }
-          const enabled = await matches[0].isEnabled();
-          if (enabled) {
-            firstEnabledAt = Date.now();
-            log("TIMING", `Wallet Ready Polls = ${pollCount}`);
-            log("TIMING", `Wallet Ready Visible Wait = ${firstVisibleAt - start}ms`);
-            log("TIMING", `Wallet Ready Enable Wait = ${firstEnabledAt - start}ms`);
-            return matches[0];
-          }
+        const enabled = await walletEl.isEnabled().catch(() => false);
+        if (enabled) {
+          log("TIMING", `Wallet Ready Polls = ${pollCount}`);
+          return walletEl;
         }
       } catch (err) {
         if (this._isFatalDriverError(err)) {
@@ -74,32 +64,33 @@ class POSPage {
   }
 
   static async isMenuDisplayed(driver) {
-    const menuBtn = await driver.$(`android=new UiSelector().text("${locators.menuOption}")`);
     try {
-      return await menuBtn.isExisting() && await menuBtn.isDisplayed();
+      return await driver.$(`android=new UiSelector().text("${locators.menuOption}")`).isDisplayed().catch(() => false);
     } catch (e) {
       return false;
     }
   }
 
   static async isPOSMainDisplayed(driver) {
-    const nameBtn = await driver.$(`android=new UiSelector().text("${locators.nameButton}")`);
     try {
-      return await nameBtn.isExisting() && await nameBtn.isDisplayed();
+      return await driver.$(`android=new UiSelector().text("${locators.nameButton}")`).isDisplayed().catch(() => false);
     } catch (e) {
       return false;
     }
   }
 
   static async isSearchChildDisplayed(driver) {
-    const matches = await driver.$$(`android=new UiSelector().text("${locators.closeButton}")`);
-    return matches.length > 0 && await matches[0].isDisplayed().catch(() => false);
+    try {
+      return await driver.$(`android=new UiSelector().text("${locators.closeButton}")`).isDisplayed().catch(() => false);
+    } catch (e) {
+      return false;
+    }
   }
 
   static async isProductPageWithSelectedProduct(driver) {
     const selectWalletBtn = await driver.$(`android=new UiSelector().text("${locators.selectWalletButton}")`);
     try {
-      return await selectWalletBtn.isExisting() && await selectWalletBtn.isDisplayed() && await selectWalletBtn.isEnabled();
+      return await selectWalletBtn.isDisplayed() && await selectWalletBtn.isEnabled();
     } catch (e) {
       return false;
     }
@@ -112,6 +103,11 @@ class POSPage {
 
     for (let attempt = 1; attempt <= 4; attempt++) {
       try {
+        // Pre-check: if already transitioned to POS page, skip menu option click retry (only on attempt > 1)
+        if (attempt > 1 && await nameBtn.isExisting() && await nameBtn.isDisplayed().catch(() => false)) {
+          log("POS_MENU", `Already transitioned to POS page, skipping menu option click retry.`);
+          return;
+        }
         log("POS_MENU", `Clicking menu option attempt ${attempt}/4...`);
         const menuBtn = await BasePage.findElementFast(driver, locators.menuOption);
         await BasePage.safeClick(driver, menuBtn);
@@ -173,11 +169,11 @@ class POSPage {
       log("CHILD_FASTPATH", `Rapid mode: reusing child context for "${childName}". Attempting rapid select.`);
       const _rapidStart = Date.now();
       try {
-        const matches = await driver.$$(`android=new UiSelector().textContains("${childName}")`);
-        if (matches.length > 0 && await matches[0].isDisplayed().catch(() => false)) {
+        const targetEl = await driver.$(`android=new UiSelector().textContains("${childName}")`);
+        if (await targetEl.isDisplayed().catch(() => false)) {
           const _rapidLocate = Date.now() - _rapidStart;
           const _clickStart = Date.now();
-          await BasePage.safeClick(driver, matches[0]);
+          await BasePage.safeClick(driver, targetEl);
           const _rapidClick = Date.now() - _clickStart;
           
           log("POS", `Child "${childName}" selected rapidly`);
@@ -207,46 +203,38 @@ class POSPage {
     // On probe failure or unsuccessful click verification, falls through to
     // the existing Name/search flow unchanged.
     try {
-      const closeSelector = `android=new UiSelector().text("${locators.closeButton}")`;
-      // Pre-locate: overlay state probe — NOT counted in locate time, but is real overhead
-      const _srPreLocateStart = Date.now();
-      const closePre = await driver.$$(closeSelector);
-      const overlayWasOpen = closePre.length > 0 && await closePre[0].isDisplayed().catch(() => false);
-      const _srPreLocateMs = Date.now() - _srPreLocateStart;
-      log("CHILD_FASTPATH", `Immediate lookup started | pre_locate_overhead=${_srPreLocateMs}ms (overlay state check — not in locate timer)`);
-
       // Single non-retrying probe for child on the current screen
       let screenTarget = null;
       const _srLocateStart = Date.now();
 
       if (isRapid) {
         // In rapid mode, skip exact match probe and go straight to textContains to save RTT
-        const srContainsMatches = await driver.$$(`android=new UiSelector().textContains("${childName}")`);
-        const srContainsVisible = srContainsMatches.length > 0 && await srContainsMatches[0].isDisplayed().catch(() => false);
+        const srContainsEl = await driver.$(`android=new UiSelector().textContains("${childName}")`);
+        const srContainsVisible = await srContainsEl.isDisplayed().catch(() => false);
         if (srContainsVisible) {
-          screenTarget = srContainsMatches[0];
+          screenTarget = srContainsEl;
           log("CHILD_FASTPATH", `Element found immediately (contains match, rapid)`);
         }
       } else {
         const _t1 = Date.now();
-        const srExactMatches = await driver.$$(`android=new UiSelector().text("${childName}")`);
+        const srExactEl = await driver.$(`android=new UiSelector().text("${childName}")`);
         const _exactQueryMs = Date.now() - _t1;
         const _t2 = Date.now();
-        const srExactVisible = srExactMatches.length > 0 && await srExactMatches[0].isDisplayed().catch(() => false);
+        const srExactVisible = await srExactEl.isDisplayed().catch(() => false);
         const _exactVisMs = Date.now() - _t2;
 
         if (srExactVisible) {
-          screenTarget = srExactMatches[0];
+          screenTarget = srExactEl;
           log("CHILD_FASTPATH", `Element found immediately (exact match) | exact_query=${_exactQueryMs}ms | vis_check=${_exactVisMs}ms`);
         } else {
           const _t3 = Date.now();
-          const srContainsMatches = await driver.$$(`android=new UiSelector().textContains("${childName}")`);
+          const srContainsEl = await driver.$(`android=new UiSelector().textContains("${childName}")`);
           const _containsQueryMs = Date.now() - _t3;
           const _t4 = Date.now();
-          const srContainsVisible = srContainsMatches.length > 0 && await srContainsMatches[0].isDisplayed().catch(() => false);
+          const srContainsVisible = await srContainsEl.isDisplayed().catch(() => false);
           const _containsVisMs = Date.now() - _t4;
           if (srContainsVisible) {
-            screenTarget = srContainsMatches[0];
+            screenTarget = srContainsEl;
             log("CHILD_FASTPATH", `Element found immediately (contains match) | exact_query=${_exactQueryMs}ms | exact_vis=${_exactVisMs}ms | contains_query=${_containsQueryMs}ms | contains_vis=${_containsVisMs}ms`);
           } else {
             log("CHILD_FASTPATH", `Element not visible on screen | exact_query=${_exactQueryMs}ms | exact_vis=${_exactVisMs}ms | contains_query=${_containsQueryMs}ms | contains_vis=${_containsVisMs}ms`);
@@ -262,32 +250,13 @@ class POSPage {
         const _srClickMs = Date.now() - _srClickStart;
         const _srTransStart = Date.now();
 
-        // Verify the click produced the expected screen transition
-        let srSucceeded = false;
-        if (overlayWasOpen) {
-          // Overlay scenario: wait for close button to disappear (overlay dismissed)
-          await driver.waitUntil(
-            async () => {
-              const cur = await driver.$$(closeSelector);
-              return !(cur.length > 0 && await cur[0].isDisplayed().catch(() => false));
-            },
-            { timeout: 600, interval: 30 }
-          ).catch(() => {});
-          const closeAfter = await driver.$$(closeSelector);
-          srSucceeded = !(closeAfter.length > 0 && await closeAfter[0].isDisplayed().catch(() => false));
-        } else {
-          // Main-screen scenario: wait for Name button to disappear (navigated to product page)
-          const nameSelector = `android=new UiSelector().text("${locators.nameButton}")`;
-          await driver.waitUntil(
-            async () => {
-              const nameMatches = await driver.$$(nameSelector);
-              return !(nameMatches.length > 0 && await nameMatches[0].isDisplayed().catch(() => false));
-            },
-            { timeout: 1500, interval: 50 }
-          ).catch(() => {});
-          const nameAfter = await driver.$$(nameSelector);
-          srSucceeded = !(nameAfter.length > 0 && await nameAfter[0].isDisplayed().catch(() => false));
-        }
+        // Verify the click produced the expected screen transition to POS Product page (State H)
+        const walletSelector = `android=new UiSelector().text("${locators.selectWalletButton}")`;
+        await driver.waitUntil(
+          async () => await driver.$(walletSelector).isDisplayed().catch(() => false),
+          { timeout: 5000, interval: 50 }
+        ).catch(() => {});
+        const srSucceeded = await driver.$(walletSelector).isDisplayed().catch(() => false);
 
         if (srSucceeded) {
           log("POS", `Child "${childName}" selected via screen reuse fast path`);
@@ -326,8 +295,8 @@ class POSPage {
         const closeSelector = `android=new UiSelector().text("${locators.closeButton}")`;
         const _fpLocateStart = Date.now();
         log("CHILD_FASTPATH", `Immediate lookup started`);
-        const closePre = await driver.$$(closeSelector);
-        const overlayAlreadyOpen = closePre.length > 0 && await closePre[0].isDisplayed().catch(() => false);
+        const closePre = await driver.$(closeSelector);
+        const overlayAlreadyOpen = await closePre.isDisplayed().catch(() => false);
         const _fpOverheadMs = Date.now() - _fpLocateStart;
         if (!overlayAlreadyOpen) {
           log("CHILD_FASTPATH", `Overlay not open — calling clickName | overlay_check=${_fpOverheadMs}ms`);
@@ -339,17 +308,15 @@ class POSPage {
         // _fpProbeStart marks the pure element-find time (after any overlay-open overhead)
         const _fpProbeStart = Date.now();
         let fastTarget = null;
-        const fastExactMatches = await driver.$$(`android=new UiSelector().text("${childName}")`);
-        const fastExactVisible = fastExactMatches.length > 0 &&
-          await fastExactMatches[0].isDisplayed().catch(() => false);
+        const fastExactEl = await driver.$(`android=new UiSelector().text("${childName}")`);
+        const fastExactVisible = await fastExactEl.isDisplayed().catch(() => false);
         if (fastExactVisible) {
-          fastTarget = fastExactMatches[0];
+          fastTarget = fastExactEl;
         } else {
-          const fastContainsMatches = await driver.$$(`android=new UiSelector().textContains("${childName}")`);
-          const fastContainsVisible = fastContainsMatches.length > 0 &&
-            await fastContainsMatches[0].isDisplayed().catch(() => false);
+          const fastContainsEl = await driver.$(`android=new UiSelector().textContains("${childName}")`);
+          const fastContainsVisible = await fastContainsEl.isDisplayed().catch(() => false);
           if (fastContainsVisible) {
-            fastTarget = fastContainsMatches[0];
+            fastTarget = fastContainsEl;
           }
         }
         const _fpProbeMs = Date.now() - _fpProbeStart;
@@ -366,21 +333,13 @@ class POSPage {
           const _fpClickMs = Date.now() - _fpClickStart;
           const _fpTransStart = Date.now();
 
-          const closeSelector = `android=new UiSelector().text("${locators.closeButton}")`;
-          let stillOpenMatches = await driver.$$(closeSelector);
-          let stillOpen = stillOpenMatches.length > 0 && await stillOpenMatches[0].isDisplayed().catch(() => false);
-          if (stillOpen) {
-            await driver.waitUntil(
-              async () => {
-                const current = await driver.$$(closeSelector);
-                return !(current.length > 0 && await current[0].isDisplayed().catch(() => false));
-              },
-              { timeout: 600, interval: 30 }
-            ).catch(() => {});
-            stillOpenMatches = await driver.$$(closeSelector);
-            stillOpen = stillOpenMatches.length > 0 && await stillOpenMatches[0].isDisplayed().catch(() => false);
-          }
-          if (!stillOpen) {
+          const walletSelector = `android=new UiSelector().text("${locators.selectWalletButton}")`;
+          await driver.waitUntil(
+            async () => await driver.$(walletSelector).isDisplayed().catch(() => false),
+            { timeout: 5000, interval: 50 }
+          ).catch(() => {});
+          const transitioned = await driver.$(walletSelector).isDisplayed().catch(() => false);
+          if (transitioned) {
             log("POS", `Child "${childName}" selected via direct fast path`);
             const _fpTransMs = Date.now() - _fpTransStart;
             log("TIMING", `Child Locate = ${_fpLocateMs}ms`);
@@ -414,18 +373,27 @@ class POSPage {
     const _spLoopStart = Date.now();
     let _spClickStart = 0, _spTransStart = 0;
     for (let attempt = 1; attempt <= 5; attempt++) {
-      log("POS", `Selecting child "${childName}" - Attempt ${attempt}/5...`);
       try {
+        // Pre-check: if already transitioned to POS Product page (wallet selection visible), skip search/click retry (only on attempt > 1)
+        if (attempt > 1) {
+          const walletSelector = `android=new UiSelector().text("${locators.selectWalletButton}")`;
+          if (await driver.$(walletSelector).isDisplayed().catch(() => false)) {
+            log("POS", `Child "${childName}" already selected (Product screen loaded), skipping search retry.`);
+            childSelected = true;
+            break;
+          }
+        }
+        log("POS", `Selecting child "${childName}" - Attempt ${attempt}/5...`);
         if (!(await this.isSearchChildDisplayed(driver))) {
           log("POS", "Search Child overlay not visible. Re-opening Name search...");
           await this.clickName(driver);
         }
 
         let childElement = null;
-        const exactMatches = await driver.$$( `android=new UiSelector().text("${childName}")` );
-        const exactVisible = exactMatches.length > 0 && await exactMatches[0].isDisplayed().catch(() => false);
+        const exactEl = await driver.$(`android=new UiSelector().text("${childName}")`);
+        const exactVisible = await exactEl.isDisplayed().catch(() => false);
         if (exactVisible) {
-          childElement = exactMatches[0];
+          childElement = exactEl;
         }
 
         if (!exactVisible) {
@@ -437,27 +405,15 @@ class POSPage {
         await BasePage.safeClick(driver, childElement);
         _spTransStart = Date.now();
         
-        // Adaptive stabilization: return quickly if overlay closes immediately, but allow brief settle window.
-        const closeSelector = `android=new UiSelector().text("${locators.closeButton}")`;
-        let closeMatches = await driver.$$(closeSelector);
-        let stillVisible = closeMatches.length > 0 && await closeMatches[0].isDisplayed().catch(() => false);
-        if (stillVisible) {
-          await driver.waitUntil(
-            async () => {
-              const current = await driver.$$(closeSelector);
-              return !(current.length > 0 && await current[0].isDisplayed().catch(() => false));
-            },
-            {
-              timeout: 600,
-              interval: 30
-            }
-          ).catch(() => {});
-          closeMatches = await driver.$$(closeSelector);
-          stillVisible = closeMatches.length > 0 && await closeMatches[0].isDisplayed().catch(() => false);
-        }
+        // Verify the click produced the expected screen transition to POS Product page (State H)
+        await driver.waitUntil(
+          async () => await driver.$(walletSelector).isDisplayed().catch(() => false),
+          { timeout: 5000, interval: 50 }
+        ).catch(() => {});
+        const transitionSuccess = await driver.$(walletSelector).isDisplayed().catch(() => false);
         
-        if (!stillVisible) {
-          log("POS", `🎉 Child "${childName}" successfully selected (Search overlay closed)`);
+        if (transitionSuccess) {
+          log("POS", `🎉 Child "${childName}" successfully selected (Product screen loaded)`);
           const _spLocateMs = _spClickStart - _spLoopStart;
           const _spClickMs  = _spTransStart - _spClickStart;
           const _spTransMs  = Date.now() - _spTransStart;
@@ -631,15 +587,15 @@ class POSPage {
           // Single immediate probe — no retries, no scroll.
           // Attempted on every click (product button stays in same position for qty > 1).
           try {
-            const exactMatches = await driver.$$(exactSelector);
-            if (exactMatches.length > 0 && await exactMatches[0].isDisplayed().catch(() => false)) {
-              productEl = exactMatches[0];
+            const exactEl = await driver.$(exactSelector);
+            if (await exactEl.isDisplayed().catch(() => false)) {
+              productEl = exactEl;
               fastHit = true;
             } else {
               // Try contains match as secondary single probe
-              const containsMatches = await driver.$$(containsSelector);
-              if (containsMatches.length > 0 && await containsMatches[0].isDisplayed().catch(() => false)) {
-                productEl = containsMatches[0];
+              const containsEl = await driver.$(containsSelector);
+              if (await containsEl.isDisplayed().catch(() => false)) {
+                productEl = containsEl;
                 fastHit = true;
               }
             }
@@ -661,17 +617,17 @@ class POSPage {
           if (!productEl) {
             for (let i = 0; i < 7; i++) {  // 7 more iterations (was 8 total, 1 already tried above)
               try {
-                const exactMatches = await driver.$$(exactSelector);
-                if (exactMatches.length > 0 && await exactMatches[0].isDisplayed()) {
-                  productEl = exactMatches[0];
+                const exactEl = await driver.$(exactSelector);
+                if (await exactEl.isDisplayed()) {
+                  productEl = exactEl;
                   break;
                 }
               } catch (e) {}
 
               try {
-                const containsMatches = await driver.$$(containsSelector);
-                if (containsMatches.length > 0 && await containsMatches[0].isDisplayed()) {
-                  productEl = containsMatches[0];
+                const containsEl = await driver.$(containsSelector);
+                if (await containsEl.isDisplayed()) {
+                  productEl = containsEl;
                   break;
                 }
               } catch (e) {}
@@ -781,10 +737,7 @@ class POSPage {
     const executionMode = process.env.EXECUTION_MODE || config.executionMode || 'standard';
     const isRapid = executionMode === 'rapid';
     await driver.waitUntil(
-      async () => {
-        const payMatches = await driver.$$(paySelector);
-        return payMatches.length > 0 && await payMatches[0].isDisplayed().catch(() => false);
-      },
+      async () => await driver.$(paySelector).isDisplayed().catch(() => false),
       {
         timeout: 30000,
         interval: isRapid ? 100 : 50,

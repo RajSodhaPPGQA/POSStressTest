@@ -24,15 +24,7 @@ class CheckoutPage {
     const isRapid = executionMode === 'rapid';
 
     await driver.waitUntil(
-      async () => {
-        const matches = await driver.$$(combinedSelector);
-        for (const m of matches) {
-          if (await m.isDisplayed().catch(() => false)) {
-            return true;
-          }
-        }
-        return false;
-      },
+      async () => await driver.$(combinedSelector).isDisplayed().catch(() => false),
       {
         timeout: 45000,
         interval: isRapid ? 100 : 50,

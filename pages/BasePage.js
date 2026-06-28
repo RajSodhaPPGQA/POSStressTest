@@ -66,8 +66,7 @@ class BasePage {
     try {
       const isVisible = async (selector) => {
         try {
-          const els = await driver.$$(selector);
-          return els.length > 0 && await els[0].isDisplayed().catch(() => false);
+          return await driver.$(selector).isDisplayed().catch(() => false);
         } catch (e) {
           return false;
         }
@@ -142,11 +141,11 @@ class BasePage {
     // Single non-blocking probe — return immediately if element is already visible.
     log("FASTPATH", `Immediate lookup started`);
     try {
-      const initialCandidates = await driver.$$(exactSelector);
+      const initialCandidate = await driver.$(exactSelector);
       const _initialLookupMs = Date.now() - _t0;
-      if (initialCandidates.length > 0 && await initialCandidates[0].isDisplayed()) {
+      if (await initialCandidate.isDisplayed().catch(() => false)) {
         log("FASTPATH", `Element found immediately | lookup=${_initialLookupMs}ms`);
-        return initialCandidates[0];
+        return initialCandidate;
       }
     } catch (e) {}
 
@@ -160,11 +159,11 @@ class BasePage {
       _retryCount++;
       log("FASTPATH", `Retry #${_retryCount}`);
       try {
-        const candidates = await driver.$$(exactSelector);
-        if (candidates.length > 0 && await candidates[0].isDisplayed()) {
+        const candidate = await driver.$(exactSelector);
+        if (await candidate.isDisplayed().catch(() => false)) {
           const _retryLoopMs = Date.now() - _retryStart;
           log("FASTPATH", `Element found | retry=${_retryCount} | retry_loop=${_retryLoopMs}ms | total=${Date.now() - _t0}ms`);
-          return candidates[0];
+          return candidate;
         }
       } catch (e) {}
     }
@@ -247,11 +246,11 @@ class BasePage {
     // Single non-blocking probe: if the element is already visible, return
     // immediately with no pause or retry overhead.
     try {
-      const initialCandidates = await driver.$$(selectorStr);
+      const initialCandidate = await driver.$(selectorStr);
       const _initialLookupMs = Date.now() - _t0;
-      if (initialCandidates.length > 0 && await initialCandidates[0].isDisplayed()) {
+      if (await initialCandidate.isDisplayed().catch(() => false)) {
         log("FASTPATH", `Element found immediately | lookup=${_initialLookupMs}ms`);
-        return initialCandidates[0];
+        return initialCandidate;
       }
     } catch (e) {}
 
@@ -263,11 +262,11 @@ class BasePage {
       await driver.pause(100);
       _retryCount++;
       try {
-        const candidates = await driver.$$(selectorStr);
-        if (candidates.length > 0 && await candidates[0].isDisplayed()) {
+        const candidate = await driver.$(selectorStr);
+        if (await candidate.isDisplayed().catch(() => false)) {
           const _retryLoopMs = Date.now() - _retryStart;
           log("FASTPATH", `Retries executed: ${_retryCount} | retry_loop=${_retryLoopMs}ms | total=${Date.now() - _t0}ms`);
-          return candidates[0];
+          return candidate;
         }
       } catch (e) {}
     }

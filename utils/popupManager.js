@@ -47,16 +47,9 @@ const popupDefinitions = [
      */
     detect: async (driver) => {
       try {
-        const titleSelector = 'android=new UiSelector().textContains("Pending Orders on Device")';
-        const bodySelector = 'android=new UiSelector().textContains("orders which are not yet submitted")';
-
-        const titleEls = await driver.$$(titleSelector);
-        const bodyEls = await driver.$$(bodySelector);
-
-        const titleDetected = titleEls.length > 0 && await titleEls[0].isDisplayed().catch(() => false);
-        const bodyDetected = bodyEls.length > 0 && await bodyEls[0].isDisplayed().catch(() => false);
-
-        return titleDetected || bodyDetected;
+        const combinedSelector = 'android=new UiSelector().textMatches(".*(Pending Orders on Device|orders which are not yet submitted).*")';
+        const els = await driver.$$(combinedSelector);
+        return els.length > 0 && await els[0].isDisplayed().catch(() => false);
       } catch (e) {
         return false;
       }

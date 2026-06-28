@@ -131,7 +131,7 @@ async function createDriverSession(targetUdid, reason = 'startup') {
                 try {
                     log("SETUP", "Rapid mode: Optimizing UiAutomator2 settings...");
                     await driver.updateSettings({
-                        waitForIdleTimeout: 100,
+                        waitForIdleTimeout: 0,
                         actionAcknowledgmentTimeout: 0
                     });
                 } catch (settingsErr) {
@@ -874,9 +874,6 @@ async function main() {
 
                     const childSelectStart = Date.now();
                     // Before major navigation: child selection
-                    try {
-                        await handleGlobalPopups(driver);
-                    } catch (e) {}
                     await POSPage.selectChild(driver, currentChild);
                     perf.record(perf.PHASES.CHILD_SELECTION, Date.now() - childSelectStart);
 
@@ -885,9 +882,6 @@ async function main() {
 
                     const productSelectStart = Date.now();
                     // Before major action: cart build
-                    try {
-                        await handleGlobalPopups(driver);
-                    } catch (e) {}
                     await POSPage.addProductsToCart(driver, cartItems);
                     const cartLabel = cartItems.map(i => `${i.name}x${i.qty}`).join(', ');
                     perf.record(perf.PHASES.CART_BUILD, Date.now() - productSelectStart);
@@ -897,9 +891,6 @@ async function main() {
 
                     const walletClickStart = Date.now();
                     // Before major navigation: select wallet
-                    try {
-                        await handleGlobalPopups(driver);
-                    } catch (e) {}
                     await POSPage.clickSelectWallet(driver);
                     perf.record(perf.PHASES.WALLET_SELECTION, Date.now() - walletClickStart);
 
@@ -908,9 +899,6 @@ async function main() {
 
                     const payClickStart = Date.now();
                     // Before major action: checkout/payment
-                    try {
-                        await handleGlobalPopups(driver);
-                    } catch (e) {}
                     await CheckoutPage.clickPay(driver);
                     perf.record(perf.PHASES.PAYMENT, Date.now() - payClickStart);
 
@@ -921,8 +909,12 @@ async function main() {
                 })();
 
                 // Race the transaction against the watchdog!
-                await Promise.race([transactionPromise, watchdogPromise]);
-                clearTimeout(watchdogTimerId);
+                try {
+                    await Promise.race([transactionPromise, watchdogPromise]);
+                } finally {
+                    clearTimeout(watchdogTimerId);
+                    transactionPromise.catch(() => {}); // Prevent unhandled promise rejection crash
+                }
 
                 stability.recordCycleSuccess();
                 longRun.recordCycleDuration(cycle, Date.now() - cycleAttemptStart);
@@ -1108,7 +1100,10 @@ async function main() {
     } finally {
         try {
             if (driver) {
-                await driver.deleteSession();
+                await Promise.race([
+                    driver.deleteSession(),
+                    new Promise((_, reject) => setTimeout(() => reject(new Error("deleteSession timeout")), 5000))
+                ]).catch(err => log("SETUP_WARNING", `Delete session timed out or failed: ${err.message}`));
             }
         } catch (e) {
             log("SETUP_WARNING", `Session already closed/unavailable during teardown: ${e.message}`);
@@ -1181,7 +1176,7 @@ async function main() {
 
         if (dashboard) {
             try {
-                await dashboard.close();
+                dashboard.close().catch(() => {});
                 log("DASHBOARD", "Live dashboard stopped");
             } catch (e) {
                 log("DASHBOARD_WARNING", `Dashboard stop warning: ${e.message}`);
@@ -1189,6 +1184,7 @@ async function main() {
         }
 
         log("SETUP", "Session closed");
+        process.exit(runStatus === 'FAILED' ? 1 : 0);
     }
 }
 
