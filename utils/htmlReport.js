@@ -475,7 +475,8 @@ function buildHtml(payload) {
           ${row('Recovery Rate', stability.recoveryRate || '0.0%', recoveryClass)}
           ${row('Popup Recoveries', stability.popupRecoveries || 0, (stability.popupRecoveries || 0) > 0 ? 'recovery' : '')}
           ${row('ADB Reconnects', stability.adbReconnects || 0, (stability.adbReconnects || 0) > 0 ? 'recovery' : '')}
-          ${row('App Restarts', stability.appRestarts || 0, (stability.appRestarts || 0) > 0 ? 'recovery' : '')}
+          ${row('App Restarts (Crash Recovery)', stability.appRestarts || 0, (stability.appRestarts || 0) > 0 ? 'recovery' : '')}
+          ${row('Proactive Relaunches', stability.proactiveRelaunches || 0, (stability.proactiveRelaunches || 0) > 0 ? 'pass' : '')}
           ${row('Session Rebuilds', stability.sessionRebuilds || 0, (stability.sessionRebuilds || 0) > 0 ? 'recovery' : '')}
           ${row('Screenshots Captured', stability.screenshotsCaptured || 0)}
         </table>

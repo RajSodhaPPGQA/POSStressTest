@@ -8,6 +8,7 @@ const stats = {
   popupRecoveries: 0,
   adbReconnects: 0,
   appRestarts: 0,
+  proactiveRelaunches: 0,
   sessionRebuilds: 0,
   screenshotsCaptured: 0,
   recoveredFailures: 0,
@@ -91,6 +92,7 @@ function getSummaryData() {
     popupRecoveries: stats.popupRecoveries,
     adbReconnects: stats.adbReconnects,
     appRestarts: stats.appRestarts,
+    proactiveRelaunches: stats.proactiveRelaunches,
     sessionRebuilds: stats.sessionRebuilds,
     screenshotsCaptured: stats.screenshotsCaptured,
     recoveredFailures: stats.recoveredFailures,
@@ -121,7 +123,8 @@ function printSummary(status = 'SUCCESS') {
   log('STABILITY', '');
   log('STABILITY', `Popup Recoveries: ${stats.popupRecoveries}`);
   log('STABILITY', `ADB Reconnects: ${stats.adbReconnects}`);
-  log('STABILITY', `App Restarts: ${stats.appRestarts}`);
+  log('STABILITY', `App Restarts (Crash Recovery): ${stats.appRestarts}`);
+  log('STABILITY', `Proactive Relaunches: ${stats.proactiveRelaunches}`);
   log('STABILITY', `Session Rebuilds: ${stats.sessionRebuilds}`);
   log('STABILITY', `Screenshots Captured: ${stats.screenshotsCaptured}`);
   log('STABILITY', `Fatal Failures: ${stats.fatalFailures}`);

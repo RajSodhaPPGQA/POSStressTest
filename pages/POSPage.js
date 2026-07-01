@@ -372,11 +372,11 @@ class POSPage {
     let childSelected = false;
     const _spLoopStart = Date.now();
     let _spClickStart = 0, _spTransStart = 0;
+    const walletSelector = `android=new UiSelector().text("${locators.selectWalletButton}")`;
     for (let attempt = 1; attempt <= 5; attempt++) {
       try {
         // Pre-check: if already transitioned to POS Product page (wallet selection visible), skip search/click retry (only on attempt > 1)
         if (attempt > 1) {
-          const walletSelector = `android=new UiSelector().text("${locators.selectWalletButton}")`;
           if (await driver.$(walletSelector).isDisplayed().catch(() => false)) {
             log("POS", `Child "${childName}" already selected (Product screen loaded), skipping search retry.`);
             childSelected = true;

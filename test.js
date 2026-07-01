@@ -588,6 +588,7 @@ async function main() {
                     recoveries: stabilitySummary.recoveredFailures,
                     reconnects: stabilitySummary.adbReconnects,
                     appRestarts: stabilitySummary.appRestarts,
+                    proactiveRelaunches: stabilitySummary.proactiveRelaunches,
                     sessionRebuilds: stabilitySummary.sessionRebuilds,
                     screenshotsCaptured: stabilitySummary.screenshotsCaptured,
                     fatalFailures: stabilitySummary.fatalFailures,
@@ -828,7 +829,7 @@ async function main() {
                         try { await driver.terminateApp('com.parentpay.PointOfService'); } catch (e) { }
                         await driver.pause(1500);
                         await driver.activateApp('com.parentpay.PointOfService');
-                        stability.increment('appRestarts');
+                        stability.increment('proactiveRelaunches');
                         await driver.pause(3000);
                         await setupAndEnterPOS(driver);
                         log("RELAUNCH", "Proactive relaunch complete. Resuming ordering loop...");
@@ -971,7 +972,7 @@ async function main() {
                             try { await driver.terminateApp('com.parentpay.PointOfService'); } catch (e) { }
                             await driver.pause(1500);
                             await driver.activateApp('com.parentpay.PointOfService');
-                            stability.increment('appRestarts');
+                            stability.increment('proactiveRelaunches');
                             await driver.pause(3000);
                             await setupAndEnterPOS(driver);
                             log("RELAUNCH", "Memory recycle complete. Resuming ordering loop...");
@@ -982,7 +983,7 @@ async function main() {
                             try { execSync(`adb -s ${targetUdid} shell am force-stop com.parentpay.PointOfService`); } catch (e) { }
                             try {
                                 execSync(`adb -s ${targetUdid} shell am start -n com.parentpay.PointOfService/com.parentpay.PointOfService.MainActivity`);
-                                stability.increment('appRestarts');
+                                stability.increment('proactiveRelaunches');
                             } catch (e) { }
                             try {
                                 driver = await createDriverSession(targetUdid, 'mem-recycle-fallback');
@@ -996,6 +997,10 @@ async function main() {
                         }
                     } else {
                         // FULL CRASH PATH: watchdog / real crash — full session teardown and recreation
+                        if (config.failFastOnCrash) {
+                            log("FATAL", `Fail-fast activated. Terminating run due to app crash/watchdog: ${cycleError.message}`);
+                            throw cycleError;
+                        }
                         if (isWatchdog) {
                             log("WATCHDOG", `⚠️ Watchdog fired! Screen has been frozen for more than ${maxTime}ms.`);
                             if (!skipScreenshotOnDeadSession) {
@@ -1137,6 +1142,7 @@ async function main() {
                     recoveries: stabilitySummary.recoveredFailures,
                     reconnects: stabilitySummary.adbReconnects,
                     appRestarts: stabilitySummary.appRestarts,
+                    proactiveRelaunches: stabilitySummary.proactiveRelaunches,
                     sessionRebuilds: stabilitySummary.sessionRebuilds,
                     screenshotsCaptured: stabilitySummary.screenshotsCaptured,
                     fatalFailures: stabilitySummary.fatalFailures,
