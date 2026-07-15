@@ -34,6 +34,9 @@ pnpm-lock.yaml
 # Screenshots
 screenshots/
 
+# Functional regression runtime artifacts
+reports/functional-regression/
+
 # Runtime-generated temporary files
 config.runtime.json
 test.runtime.js

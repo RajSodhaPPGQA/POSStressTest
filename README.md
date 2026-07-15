@@ -117,6 +117,16 @@ Run the main stress loop:
 node test.js
 ```
 
+Or use npm scripts:
+```bash
+npm run stress
+```
+
+Run the independent functional regression suite:
+```bash
+npm run functional-regression
+```
+
 Or run the benchmark to compare standard and rapid modes:
 ```bash
 node benchmark.js
@@ -128,6 +138,9 @@ node benchmark.js
 * **Live Dashboard**: Automatically opens on `http://127.0.0.1:5050` (if configured) to display OPM, cycle statuses, and active events.
 * **HTML Summary**: Saved under `reports/` with rich metrics visualization charts.
 * **Excel Metrics**: Detailed transaction logs saved under `reports/` for spreadsheet analysis.
+* **Functional Regression Reports**: Saved under `reports/functional-regression/` and kept separate from stress metrics.
+
+Functional regression architecture and usage details are documented in `docs/FunctionalRegression.md`.
 
 ### Dashboard Preview
 ![Dashboard Preview](docs/images/dashboard_placeholder.png)
